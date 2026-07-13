@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dsjson"
+version = "0.1.0"
+description = "Submission-focused Python library and CLI tool for creating CDISC Dataset-JSON from XPT and Define-XML for metadata driven approach."
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [
+    {name = "Trinath Panda"}
+]
+dependencies = [
+    "pandas>=1.5",
+    "jsonschema>=4.0"
+]
+
+[project.optional-dependencies]
+sas = [
+    "pyreadstat>=1.2"
+]
+dev = [
+    "pytest>=7.0",
+    "ruff>=0.4"
+]
+
+[project.scripts]
+dsjson = "dsjson.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["dsjson*"]
