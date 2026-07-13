@@ -86,9 +86,9 @@ class ConversionService:
         )
 
         if report.ok:
-            logger.info("[%s] Validation PASSED ✅", ds)
+            logger.info("[%s] Validation PASSED", ds)
         else:
-            logger.error("[%s] Validation FAILED ❌", ds)
+            logger.error("[%s] Validation FAILED", ds)
 
             # Group errors by message
             err_list = report.errors or []

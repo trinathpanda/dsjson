@@ -178,7 +178,7 @@ def _run_convert(args) -> int:
         with open(out_file, "w", encoding="utf-8") as f:
             json.dump(dataset_json, f, indent=4)
 
-        print(f"\n✅ Dataset-JSON created: {out_file}")
+        print(f"\n Dataset-JSON created: {out_file}")
 
         # write validation report (only if validation enabled)
         if not args.no_validate:
@@ -197,25 +197,25 @@ def _run_convert(args) -> int:
             with open(report_file, "w", encoding="utf-8") as f:
                 json.dump(report_data, f, indent=4)
 
-            print(f"✅ Validation report created: {report_file}")
+            print(f"Validation report created: {report_file}")
 
             if not full_report.ok:
-                print("❌ Validation FAILED. See report and logs for details.")
+                print("Validation FAILED. See report and logs for details.")
                 return 1
 
-        print("🎉 Conversion completed successfully")
+        print("Conversion completed successfully")
         return 0
 
     except KeyboardInterrupt:
-        print("\nConversion interrupted by user.")
+        print("\n Conversion interrupted by user.")
         return 130
 
     except DSJSONError as e:
-        print(f"\n❌ {e}")
+        print(f"\n {e}")
         return 1
 
     except Exception as e:
-        print(f"\n❌ Unexpected error: {e}")
+        print(f"\n Unexpected error: {e}")
         return 1
 
 
