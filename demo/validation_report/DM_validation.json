@@ -1,0 +1,19 @@
+{
+    "dataset": "DM",
+    "status": "PASS",
+    "timestamp": "2026-08-21T11:58:58",
+    "summary": {
+        "errors": 0,
+        "warnings": 0
+    },
+    "metadata": {
+        "status": "PASS",
+        "errors": [],
+        "warnings": []
+    },
+    "rows": {
+        "status": "PASS",
+        "errors": [],
+        "warnings": []
+    }
+}
