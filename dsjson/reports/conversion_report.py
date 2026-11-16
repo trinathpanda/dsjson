@@ -11,11 +11,12 @@ class ConversionReport:
     """Collect and write conversion results."""
     results: List[Dict] = field(default_factory=list)
 
-    def add_result(self, domain: str, status: str, message: str = "") -> None:
+    def add_result(self, domain: str, status: str, message: str = "", **details) -> None:
         self.results.append({
             "domain": domain,
             "status": status,
             "message": message,
+            **details,
         })
 
     def to_dict(self) -> Dict:
@@ -25,6 +26,7 @@ class ConversionReport:
                 "passed": sum(1 for item in self.results if item["status"] == "PASS"),
                 "failed": sum(1 for item in self.results if item["status"] == "FAIL"),
                 "pending": sum(1 for item in self.results if item["status"] == "PENDING"),
+                "skipped": sum(1 for item in self.results if item["status"] == "SKIPPED"),
             },
             "results": self.results,
         }

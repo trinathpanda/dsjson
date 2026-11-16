@@ -38,7 +38,12 @@ class XPTReader:
         try:
             logger.info("Reading XPT file: %s", self.xpt_path)
 
-            self.df, self.meta = pyreadstat.read_xport(str(self.xpt_path))
+            try:
+                self.df, self.meta = pyreadstat.read_xport(str(self.xpt_path))
+            except UnicodeDecodeError:
+                # SAS transport files are often Windows-1252 (e.g. curly quotes), not UTF-8
+                logger.warning("XPT is not UTF-8; reading as cp1252: %s", self.xpt_path)
+                self.df, self.meta = pyreadstat.read_xport(str(self.xpt_path), encoding="cp1252")
 
             logger.info("XPT loaded successfully")
             logger.info(
@@ -61,7 +66,8 @@ class XPTReader:
             raise RuntimeError("Call read() before accessing records.")
 
         # Replace NaN → None (JSON-safe)
-        df_clean = self.df.where(pd.notnull(self.df), None)
+        # object dtype first: float columns would turn None back into NaN (invalid JSON)
+        df_clean = self.df.astype(object).where(pd.notnull(self.df), None)
 
         return df_clean.to_dict(orient="records")
 

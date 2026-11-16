@@ -84,17 +84,14 @@ class SchemaValidator:
                 return p.resolve()
             return p  # will error later with clearer message
 
+        # schema shipped inside the package: works from any cwd and in a frozen app
+        bundled = Path(__file__).resolve().parent / "schemas" / "dataset-json-v1.1.schema.json"
+        if bundled.exists():
+            return bundled
+
         cwd = Path.cwd()
         for rel in self.DEFAULT_SCHEMA_CANDIDATES:
             candidate = (cwd / rel).resolve()
-            if candidate.exists():
-                return candidate
-
-        # try relative to this module location (cwd may differ)
-        here = Path(__file__).resolve().parent
-        project_root = here.parent.parent  # dsjson/validation -> dsjson
-        for rel in self.DEFAULT_SCHEMA_CANDIDATES:
-            candidate = (project_root.parent / rel).resolve()
             if candidate.exists():
                 return candidate
 

@@ -1,6 +1,6 @@
 """Dataset JSON Builder for dsjson (Schema-Compliant Final Version)"""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Any, Optional
 
 from dsjson.logging_config import get_logger
@@ -117,6 +117,7 @@ class DatasetJSONBuilder:
         records: List[Dict],
         dataset_label: Optional[str] = None,
         metadata_source: str = "Define-XML",
+        item_group_oid: Optional[str] = None,
     ) -> Dict:
 
         ds = dataset_name.upper()
@@ -133,12 +134,12 @@ class DatasetJSONBuilder:
         columns = self._filter_schema_columns(merged_columns)
 
         # ✅ Timestamp with timezone (better)
-        creation_time = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        creation_time = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
         dataset_json = {
             "datasetJSONCreationDateTime": creation_time,
             "datasetJSONVersion": "1.1.0",
-            "itemGroupOID": f"IG.{ds}",
+            "itemGroupOID": item_group_oid or f"IG.{ds}",
             "name": ds,
             "label": dataset_label or ds,
             "records": len(rows),

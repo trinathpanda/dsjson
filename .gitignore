@@ -24,3 +24,10 @@ env/
 *.log
 demo/output/*
 !demo/output/.gitkeep
+output/
+
+# CDISC pilot test data (~200 MB, fetch with scripts/fetch_pilot_data.py)
+demo/input/cdiscpilot01/
+
+# Private correspondence (never commit)
+gitignore/

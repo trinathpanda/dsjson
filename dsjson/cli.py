@@ -22,14 +22,12 @@ Examples (PowerShell):
 """
 
 import argparse
-import json
 import os
 import sys
 from typing import Optional
 
 from dsjson.services.conversion_service import ConversionService
 from dsjson.logging_config import setup_logger
-from dsjson.reports.validation_report import ValidationReportBuilder
 from dsjson.validation.schema_validator import SchemaValidator
 from dsjson.exceptions import DSJSONError
 
@@ -82,8 +80,8 @@ Examples:
 
     convert.add_argument(
         "--out-dir", "-o",
-        default=True,
-        help="Output directory for Dataset-JSON files"
+        default="output",
+        help="Output directory for Dataset-JSON files (default: ./output)"
     )
 
     convert.add_argument(
@@ -119,13 +117,30 @@ Examples:
         help="Explicit log level (overrides --verbose)"
     )
 
+    # ----------------------------
+    # convert-all command (batch)
+    # ----------------------------
+    convert_all = subparsers.add_parser(
+        "convert-all", help="Convert every XPT in a folder that Define-XML describes"
+    )
+    convert_all.add_argument("--data-dir", "-i", required=True, help="Folder with SDTM XPT files")
+    convert_all.add_argument("--define", "-d", required=True, help="Path to Define-XML file (define.xml)")
+    convert_all.add_argument("--datasets", nargs="+", default=None, help="Only these datasets, e.g. DM AE (default: all)")
+    convert_all.add_argument("--out-dir", "-o", default="output", help="Output directory (default: ./output)")
+    convert_all.add_argument("--report-dir", "-r", default=None, help="Validation reports (default: <out-dir>/validation_report)")
+    convert_all.add_argument("--log-dir", "-l", default=None, help="Log folder (default: <out-dir>/logs)")
+    convert_all.add_argument("--no-validate", action="store_true", help="Skip schema validation and reports")
+    convert_all.add_argument("-v", "--verbose", action="store_true", help="Verbose output (DEBUG level)")
+    convert_all.add_argument(
+        "--log-level", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"], default=None,
+        help="Explicit log level (overrides --verbose)",
+    )
+
     return parser
 
 
 def _resolve_defaults(args) -> None:
-    """Set default folders based on cwd and out-dir."""
-    cwd = os.getcwd()
-
+    """Set default folders based on out-dir."""
     if args.report_dir is None:
         args.report_dir = os.path.join(args.out_dir, "validation_report")
 
@@ -173,33 +188,14 @@ def _run_convert(args) -> int:
             validate_rows=(not args.no_validate),
         )
 
-        # write Dataset-JSON output
-        out_file = os.path.join(args.out_dir, f"{dataset_name}.json")
-        with open(out_file, "w", encoding="utf-8") as f:
-            json.dump(dataset_json, f, indent=4)
+        # write Dataset-JSON + validation report (report only if validation enabled)
+        paths = service.write_outputs(dataset_json, args.out_dir, args.report_dir)
+        print(f"\n Dataset-JSON created: {paths['dataset_json']}")
 
-        print(f"\n Dataset-JSON created: {out_file}")
+        if "validation_report" in paths:
+            print(f"Validation report created: {paths['validation_report']}")
 
-        # write validation report (only if validation enabled)
-        if not args.no_validate:
-            full_report = validator.validate_dataset(dataset_json)
-            metadata_report = validator.validate_metadata(dataset_json)
-            row_report = validator.validate_rows(dataset_json)
-
-            report_data = ValidationReportBuilder.build(
-                dataset_name,
-                full_report,
-                metadata_report,
-                row_report
-            )
-
-            report_file = os.path.join(args.report_dir, f"{dataset_name}_validation.json")
-            with open(report_file, "w", encoding="utf-8") as f:
-                json.dump(report_data, f, indent=4)
-
-            print(f"Validation report created: {report_file}")
-
-            if not full_report.ok:
+            if not service.last_validation[0].ok:
                 print("Validation FAILED. See report and logs for details.")
                 return 1
 
@@ -219,12 +215,54 @@ def _run_convert(args) -> int:
         return 1
 
 
+def _run_convert_all(args) -> int:
+    _resolve_defaults(args)
+
+    setup_logger(
+        output_dir=args.log_dir,
+        log_level=_effective_log_level(args.verbose, args.log_level),
+        enable_console=True,
+        enable_file=True,
+    )
+
+    service = ConversionService(validator=SchemaValidator(skip_validation=args.no_validate))
+
+    try:
+        results = service.convert_folder(
+            data_dir=args.data_dir,
+            define_path=args.define,
+            out_dir=args.out_dir,
+            report_dir=None if args.no_validate else args.report_dir,
+            datasets=args.datasets,
+        )
+    except KeyboardInterrupt:
+        print("\n Conversion interrupted by user.")
+        return 130
+    except DSJSONError as e:
+        print(f"\n {e}")
+        return 1
+
+    print(f"\n{'Dataset':<10}{'Status':<9}{'Records':>9}{'Columns':>9}{'Errors':>8}{'Warnings':>10}{'Time(s)':>9}")
+    for r in results:
+        print(
+            f"{r['dataset']:<10}{r['status']:<9}{r.get('records', '-'):>9}{r.get('columns', '-'):>9}"
+            f"{r.get('errors', '-'):>8}{r.get('warnings', '-'):>10}{r.get('seconds', '-'):>9}"
+            + (f"  {r['message']}" if r.get("message") else "")
+        )
+
+    failed = sum(1 for r in results if r["status"] == "FAIL")
+    print(f"\n{len(results) - failed}/{len(results)} datasets without failures. Output: {args.out_dir}")
+    return 1 if failed else 0
+
+
 def main() -> int:
     parser = _build_parser()
     args = parser.parse_args()
 
     if args.command == "convert":
         return _run_convert(args)
+    if args.command == "convert-all":
+        return _run_convert_all(args)
 
     return 1
 

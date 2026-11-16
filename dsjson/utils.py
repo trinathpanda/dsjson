@@ -43,7 +43,7 @@ def match_column_names(source_columns: List[str], metadata_columns: List[str]) -
         missing_src = set(meta.keys()) - set(src.keys())
 
         raise ValueError(
-            f"Column mismatch → Missing in metadata: {missing_meta}, Missing in source: {missing_src}"
+            f"Column mismatch -> Missing in metadata: {missing_meta}, Missing in source: {missing_src}"
         )
 
     return {src[k]: meta[k] for k in src}

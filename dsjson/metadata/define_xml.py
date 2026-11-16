@@ -48,7 +48,7 @@ class DefineXMLParser:
 
         except Exception as e:
             logger.exception("Define-XML parsing failed: %s", str(e))
-            raise DefineXMLParseError(str(e))
+            raise DefineXMLParseError(str(self.define_path), str(e)) from e
 
     def _extract_namespaces(self) -> Dict[str, str]:
         """Extract XML namespaces dynamically."""
@@ -70,25 +70,64 @@ class DefineXMLParser:
         domains: List[str] = []
 
         for itemgroup in self.root.findall(".//odm:ItemGroupDef", self.ns):
-            domain = itemgroup.attrib.get("Domain")
+            # Define-XML 1.0 has no Domain attribute; fall back to Name
+            domain = itemgroup.attrib.get("Domain") or itemgroup.attrib.get("Name")
             if domain:
                 domains.append(domain)
 
         logger.info("Domains detected: %d", len(domains))
         return domains
 
+    def get_dataset_names(self) -> List[str]:
+        """Return the Name of every ItemGroupDef (dataset), e.g. DM, AE, SUPPAE."""
+        if self.root is None:
+            raise RuntimeError("Define-XML not parsed. Call parse() first.")
+
+        return [
+            ig.attrib["Name"].upper()
+            for ig in self.root.findall(".//odm:ItemGroupDef", self.ns)
+            if ig.attrib.get("Name")
+        ]
+
     def get_domain(self, domain: str) -> ET.Element:
-        """Return ItemGroupDef node for a given domain."""
+        """Return ItemGroupDef node for a dataset (matched on Name, then Domain)."""
         if self.root is None:
             raise RuntimeError("Define-XML not parsed. Call parse() first.")
 
         dom = domain.upper()
+        itemgroups = self.root.findall(".//odm:ItemGroupDef", self.ns)
 
-        for itemgroup in self.root.findall(".//odm:ItemGroupDef", self.ns):
-            if itemgroup.attrib.get("Domain") == dom:
-                return itemgroup
+        # Name first: SUPP--/split datasets share the parent's Domain value
+        for attr in ("Name", "Domain"):
+            for itemgroup in itemgroups:
+                if (itemgroup.attrib.get(attr) or "").upper() == dom:
+                    return itemgroup
 
-        raise DefineXMLDomainNotFoundError(f"{domain} not found")
+        raise DefineXMLDomainNotFoundError(domain)
+
+    def get_item_group_oid(self, domain: str) -> Optional[str]:
+        """OID of the dataset's ItemGroupDef, e.g. "IG.DM" or "DM"."""
+        return self.get_domain(domain).attrib.get("OID")
+
+    def _get_domain_keys(self, node: ET.Element) -> List[str]:
+        """Key variables from def:DomainKeys (Define-XML 1.0), e.g. "STUDYID, USUBJID"."""
+        if "def" not in self.ns:
+            return []
+        keys = node.attrib.get(f"{{{self.ns['def']}}}DomainKeys") or ""
+        return [k.strip().upper() for k in keys.split(",") if k.strip()]
+
+    def _get_label(self, node: ET.Element) -> Optional[str]:
+        """Label from Description/TranslatedText (Define 2.x) or def:Label (Define 1.0)."""
+        desc = node.find("odm:Description/odm:TranslatedText", self.ns)
+        if desc is not None and desc.text and desc.text.strip():
+            return desc.text.strip()
+
+        if "def" in self.ns:
+            label = node.attrib.get(f"{{{self.ns['def']}}}Label")
+            if label and label.strip():
+                return label.strip()
+
+        return None
 
     # ---------------------------------------------------------------------
     # ✅ NEW: Dataset label extraction
@@ -103,10 +142,9 @@ class DefineXMLParser:
         dom = domain.upper()
         domain_node = self.get_domain(dom)
 
-        desc = domain_node.find(".//odm:Description/odm:TranslatedText", self.ns)
+        label = self._get_label(domain_node)
 
-        if desc is not None and desc.text:
-            label = desc.text.strip()
+        if label:
             logger.info("[%s] Dataset label extracted: %s", dom, label)
             return label
 
@@ -127,7 +165,7 @@ class DefineXMLParser:
         if t in ("text", "string"):
             return "string"
         if t in ("date", "datetime", "time"):
-            return "string"
+            return t  # Dataset-JSON v1.1 types, values stay ISO 8601 strings
         if t == "integer":
             return "integer"
         if t in ("float", "double", "decimal"):
@@ -152,6 +190,7 @@ class DefineXMLParser:
 
         domain_node = self.get_domain(dom)
         columns: List[Dict] = []
+        domain_keys = self._get_domain_keys(domain_node)
 
         for itemref in domain_node.findall(".//odm:ItemRef", self.ns):
 
@@ -171,24 +210,23 @@ class DefineXMLParser:
             name = itemdef.attrib.get("Name")
             odm_type = itemdef.attrib.get("DataType")
 
-            desc = itemdef.find(
-                ".//odm:Description/odm:TranslatedText",
-                self.ns
-            )
-
-            label = desc.text.strip() if (desc is not None and desc.text) else name
+            label = self._get_label(itemdef) or name
 
             length = itemdef.attrib.get("Length")
             key_seq = itemref.attrib.get("KeySequence")
+            if not key_seq and name and name.upper() in domain_keys:
+                key_seq = str(domain_keys.index(name.upper()) + 1)
 
+            data_type = self._map_data_type(odm_type)
             column: Dict[str, Any] = {
                 "itemOID": item_oid,
                 "name": name,
                 "label": label,
-                "dataType": self._map_data_type(odm_type),
+                "dataType": data_type,
             }
 
-            if length:
+            # Dataset-JSON carries length for character variables only
+            if length and data_type == "string":
                 try:
                     column["length"] = int(length)
                 except ValueError:

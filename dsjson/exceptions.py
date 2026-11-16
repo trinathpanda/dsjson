@@ -66,7 +66,7 @@ class MetadataExtractionError(DSJSONError):
 
 class DefineXMLParseError(MetadataExtractionError):
     def __init__(self, file_path: str, details: str):
-        super().__init__(f"Failed to parse Define-XML: {file_path} → {details}")
+        super().__init__(f"Failed to parse Define-XML: {file_path} -> {details}")
 
 
 class DefineXMLDomainNotFoundError(MetadataExtractionError):
