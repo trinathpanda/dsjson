@@ -7,6 +7,7 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+QtCore = pytest.importorskip("PySide6.QtCore")
 
 from desktop_app.main_window import MainWindow  # noqa: E402
 from desktop_app.worker import ConversionWorker  # noqa: E402
@@ -64,7 +65,9 @@ def test_worker_batch_and_window_dataset_list(app, tmp_path):
     window.output_input.setText(str(tmp_path))
     window.show_summary(results)
     assert window.stat_values["passed"].text() == "2"
-    assert window.dataset_combo.count() == 2
+    assert [window.dataset_combo.itemText(i) for i in range(window.dataset_combo.count())] == ["DM", "TS"]
+    details = {window.summary_table.item(r, 0).text(): window.summary_table.item(r, 7).text() for r in range(2)}
+    assert details["DM"] == ""  # no warnings, nothing to say
 
     window.dataset_combo.setCurrentText("DM")  # loads preview, columns, validation
     assert window.open_json_button.isEnabled()
@@ -72,6 +75,30 @@ def test_worker_batch_and_window_dataset_list(app, tmp_path):
     assert window.columns_table.rowCount() == 25
     assert "PASS" in window.validation_status.text()
 
-    window.preview_filter.setText("01-701-1015")
-    window.apply_preview_filter()
-    assert window.preview_proxy.rowCount() == 1
+    # Excel-style: distinct values per column, filter, sort both ways, clear sort
+    sex = window.preview_model._headers.index("SEX")
+    values = dict(window.preview_proxy.distinct_values(sex))
+    assert set(values) == {"F", "M"} and sum(values.values()) == 306
+    window._apply_column_filter(window.preview_view, sex, {"F"})
+    assert window.preview_proxy.rowCount() == values["F"]
+    assert "SEX" in window.filter_summary.text() and not window.clear_filters_button.isHidden()
+    age = window.preview_model._headers.index("AGE")
+    window.preview_view.sortByColumn(age, QtCore.Qt.AscendingOrder)
+    ages = [int(window.preview_proxy.index(r, age).data()) for r in range(window.preview_proxy.rowCount())]
+    assert ages == sorted(ages)  # numeric, not text, order
+    window.preview_view.sortByColumn(age, QtCore.Qt.DescendingOrder)
+    assert int(window.preview_proxy.index(0, age).data()) == max(ages)
+    assert "sorted by" in window.filter_summary.text()
+    first_unsorted = window.preview_model._original[0]
+    window.clear_preview_sort()
+    assert window.preview_model.rows[0] is first_unsorted  # back to file order
+    window.clear_preview_filters()
+    assert window.preview_proxy.rowCount() == 306
+
+
+def test_details_explain_type_warnings(tmp_path):
+    report = {"rows": {"warnings": [{"message": "Value for LBSTRESN expected integer but got float"}] * 3}}
+    (tmp_path / "LB_validation.json").write_text(__import__("json").dumps(report))
+    text = MainWindow._details({"dataset": "LB", "status": "PASS", "warnings": 3, "message": ""}, tmp_path)
+    assert text == "LBSTRESN: Define-XML says integer, 3 value(s) are float"
+    assert MainWindow._details({"dataset": "XX", "status": "FAIL", "message": "boom"}, tmp_path) == "boom"

@@ -7,15 +7,17 @@ from __future__ import annotations
 
 import html
 import json
+from collections import Counter
 import re
+from contextlib import contextmanager
 from pathlib import Path
 
 from PySide6.QtCore import (
     QAbstractTableModel,
+    QEventLoop,
     QModelIndex,
     QSettings,
     QSize,
-    QSortFilterProxyModel,
     Qt,
     QThread,
     QUrl,
@@ -23,11 +25,13 @@ from PySide6.QtCore import (
 from PySide6.QtGui import QBrush, QColor, QDesktopServices, QFont, QKeySequence, QPalette, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QButtonGroup,
     QCheckBox,
     QComboBox,
     QFileDialog,
     QFrame,
+    QGraphicsBlurEffect,
     QGridLayout,
     QHBoxLayout,
     QHeaderView,
@@ -52,70 +56,112 @@ from PySide6.QtWidgets import (
 )
 
 from dsjson.metadata.define_xml import DefineXMLParser
+from desktop_app.table_filter import BLANK_LABEL, ColumnFilterPopup, FilterHeader, RowsFilterProxy, sort_key
 from desktop_app.worker import ConversionWorker
 
-SUMMARY_HEADERS = ["Dataset", "Status", "Records", "Columns", "Errors", "Warnings", "Time (s)", "Message"]
+SUMMARY_HEADERS = ["Dataset", "Status", "Records", "Columns", "Errors", "Warnings", "Time (s)", "Details"]
 SUMMARY_KEYS = ["dataset", "status", "records", "columns", "errors", "warnings", "seconds", "message"]
 COLUMN_HEADERS = ["#", "Name", "Label", "Data type", "Length", "Key seq.", "Item OID"]
+VALIDATION_HEADERS = ["Severity", "Check", "Location", "Message"]
+CHEVRON = (Path(__file__).parent / "assets" / "chevron-down.svg").as_posix()
 
-PASS_COLOR = QColor("#15803D")
-FAIL_COLOR = QColor("#B91C1C")
-MUTED_COLOR = QColor("#64748B")
+PASS_COLOR = QColor("#4ADE80")
+FAIL_COLOR = QColor("#F87171")
+MUTED_COLOR = QColor("#94A3B8")
+WARN_COLOR = QColor("#FBBF24")
+TEXT_COLOR = QColor("#E2E8F0")
 
-# One place for the look: navy primary on light slate, 4.5:1+ text contrast
+# One place for the look: dark slate surfaces, blue accent, 4.5:1+ text contrast
 STYLE = """
-QMainWindow, QWidget#results { background: #F8FAFC; }
-QWidget { color: #0F172A; }
-QWidget#sidebar { background: #FFFFFF; }
-QScrollArea#sidebarScroll { border: none; border-right: 1px solid #CBD5E1; background: #FFFFFF; }
-QLabel#appTitle { font-size: 17pt; font-weight: 600; color: #1E3A8A; }
-QLabel#muted { color: #475569; }
-QLabel#stepTitle { font-size: 10.5pt; font-weight: 600; color: #1E3A8A; }
-QLabel#sectionTitle { font-size: 12pt; font-weight: 600; color: #1E3A8A; }
-QFrame#card, QFrame#stat { background: #FFFFFF; border: 1px solid #CBD5E1; border-radius: 8px; }
-QLabel#statValue { font-size: 17pt; font-weight: 600; color: #1E3A8A; }
-QLabel#statCaption { color: #475569; }
+QMainWindow, QWidget#results { background: #0B1120; }
+QWidget { color: #E2E8F0; }
+QWidget#sidebar { background: #111827; }
+QScrollArea#sidebarScroll { border: none; border-right: 1px solid #1F2937; background: #111827; }
+QLabel#appTitle { font-size: 17pt; font-weight: 700; color: #F8FAFC; }
+QLabel#muted { color: #94A3B8; }
+QLabel#warning { color: #FBBF24; }
+QLabel#stepTitle { font-size: 10.5pt; font-weight: 600; color: #93C5FD; }
+QLabel#sectionTitle { font-size: 12pt; font-weight: 600; color: #F1F5F9; }
+QFrame#card { background: #161F30; border: 1px solid #243045; border-radius: 10px; }
+QFrame#stat { background: #161F30; border: 1px solid #243045; border-top: 3px solid #3B82F6; border-radius: 10px; }
+QLabel#statValue { font-size: 18pt; font-weight: 700; color: #F8FAFC; }
+QLabel#statCaption { color: #94A3B8; font-size: 9pt; }
 QLineEdit, QComboBox {
-    background: #FFFFFF; border: 1px solid #CBD5E1; border-radius: 6px; padding: 5px 8px; min-height: 20px;
+    background: #0F172A; border: 1px solid #334155; border-radius: 6px; padding: 5px 8px; min-height: 20px;
+    selection-background-color: #2563EB;
 }
-QLineEdit:focus, QComboBox:focus { border: 2px solid #1E40AF; }
+QLineEdit:hover, QComboBox:hover { border-color: #475569; }
+QLineEdit:focus, QComboBox:focus { border: 2px solid #3B82F6; }
+QComboBox { padding-right: 26px; }
+QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: center right; border: none; border-left: 1px solid #334155; width: 24px; }
+QComboBox::down-arrow { image: url(@CHEVRON@); width: 12px; height: 12px; }
+QComboBox::down-arrow:on { top: 1px; }
+QComboBox QAbstractItemView {
+    background: #111827; border: 1px solid #334155; selection-background-color: #1E3A8A; outline: none;
+}
 QPushButton {
-    background: #FFFFFF; border: 1px solid #CBD5E1; border-radius: 6px; padding: 5px 12px; min-height: 22px;
+    background: #1E293B; border: 1px solid #334155; border-radius: 6px; padding: 5px 12px; min-height: 22px;
 }
-QPushButton:hover { background: #E9EEF6; }
-QPushButton:focus { border: 2px solid #1E40AF; }
-QPushButton:disabled { color: #94A3B8; background: #F1F5F9; }
+QPushButton:hover { background: #273449; border-color: #475569; }
+QPushButton:pressed { background: #0F172A; }
+QPushButton:focus { border: 2px solid #3B82F6; }
+QPushButton:disabled { color: #64748B; background: #111827; border-color: #1F2937; }
 QPushButton#primary {
-    background: #1E40AF; color: #FFFFFF; border: none; font-size: 11pt; font-weight: 600; padding: 9px; min-height: 26px;
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #2563EB, stop:1 #4F46E5);
+    color: #FFFFFF; border: none; border-radius: 8px; font-size: 11pt; font-weight: 600; padding: 10px; min-height: 26px;
 }
-QPushButton#primary:hover { background: #1E3A8A; }
-QPushButton#primary:focus { border: 2px solid #F59E0B; }
-QPushButton#primary:disabled { background: #94A3B8; }
+QPushButton#primary:hover { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #3B82F6, stop:1 #6366F1); }
+QPushButton#primary:pressed { background: #1D4ED8; }
+QPushButton#primary:focus { border: 2px solid #FBBF24; }
+QPushButton#primary:disabled { background: #334155; color: #94A3B8; }
 QPushButton#segment { border-radius: 0; padding: 6px 10px; }
-QPushButton#segment:checked { background: #1E40AF; color: #FFFFFF; border-color: #1E40AF; font-weight: 600; }
-QPushButton#link { border: none; background: transparent; color: #1E40AF; padding: 2px 4px; min-height: 16px; }
-QPushButton#link:hover { text-decoration: underline; }
-QListWidget { border: 1px solid #CBD5E1; border-radius: 6px; background: #FFFFFF; }
-QTabWidget::pane { border: 1px solid #CBD5E1; border-radius: 6px; background: #FFFFFF; top: -1px; }
-QTabBar::tab { padding: 8px 16px; color: #475569; background: transparent; border: none; border-bottom: 2px solid transparent; }
-QTabBar::tab:selected { color: #1E40AF; border-bottom: 2px solid #1E40AF; font-weight: 600; }
-QTabBar::tab:hover { color: #1E3A8A; }
+QPushButton#segment:checked { background: #2563EB; color: #FFFFFF; border-color: #2563EB; font-weight: 600; }
+QPushButton#link { border: none; background: transparent; color: #60A5FA; padding: 2px 4px; min-height: 16px; }
+QPushButton#link:hover { color: #93C5FD; text-decoration: underline; }
+QListWidget { border: 1px solid #334155; border-radius: 6px; background: #0F172A; outline: none; }
+QListWidget::item { padding: 3px 4px; border-radius: 4px; }
+QListWidget::item:hover { background: #1E293B; }
+QListWidget::item:selected { background: #1E3A8A; color: #F8FAFC; }
+QTabWidget::pane { border: 1px solid #243045; border-radius: 8px; background: #111827; top: -1px; }
+QTabBar::tab { padding: 8px 16px; color: #94A3B8; background: transparent; border: none; border-bottom: 2px solid transparent; }
+QTabBar::tab:selected { color: #F8FAFC; border-bottom: 2px solid #3B82F6; font-weight: 600; }
+QTabBar::tab:hover:!selected { color: #CBD5E1; }
 QTableView, QTableWidget {
-    background: #FFFFFF; alternate-background-color: #F8FAFC; gridline-color: #E2E8F0; border: none;
-    selection-background-color: #DBEAFE; selection-color: #0F172A;
+    background: #111827; alternate-background-color: #151E2E; gridline-color: #1F2937; border: none;
+    selection-background-color: #1E3A8A; selection-color: #F8FAFC;
 }
-QHeaderView { background: #FFFFFF; }
-QTableCornerButton::section { background: #F1F5F9; border: none; border-bottom: 1px solid #CBD5E1; }
-QScrollBar { background: #F1F5F9; }
+QHeaderView { background: #111827; }
+QTableCornerButton::section { background: #1A2333; border: none; border-bottom: 1px solid #334155; }
 QHeaderView::section {
-    background: #F1F5F9; border: none; border-right: 1px solid #E2E8F0; border-bottom: 1px solid #CBD5E1;
-    padding: 5px 6px; font-weight: 600; color: #334155;
+    background: #1A2333; border: none; border-right: 1px solid #243045; border-bottom: 1px solid #334155;
+    padding: 6px 6px; font-weight: 600; color: #CBD5E1;
 }
-QPlainTextEdit#mono { font-family: Consolas, "Cascadia Mono", monospace; font-size: 9.5pt; background: #FFFFFF; border: none; }
-QProgressBar { border: 1px solid #CBD5E1; border-radius: 5px; background: #F1F5F9; max-height: 10px; }
-QProgressBar::chunk { background: #1E40AF; border-radius: 4px; }
-QSplitter::handle { background: #E2E8F0; }
-QStatusBar { background: #FFFFFF; border-top: 1px solid #CBD5E1; color: #475569; }
+QScrollBar:vertical { background: transparent; width: 11px; margin: 2px; }
+QScrollBar:horizontal { background: transparent; height: 11px; margin: 2px; }
+QScrollBar::handle { background: #334155; border-radius: 4px; }
+QScrollBar::handle:vertical { min-height: 28px; }
+QScrollBar::handle:horizontal { min-width: 28px; }
+QScrollBar::handle:hover { background: #475569; }
+QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; }
+QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
+QPlainTextEdit#mono {
+    font-family: Consolas, "Cascadia Mono", monospace; font-size: 9.5pt; background: #0B1120; border: none;
+    selection-background-color: #1E3A8A;
+}
+QProgressBar { border: none; border-radius: 4px; background: #1F2937; max-height: 8px; }
+QProgressBar::chunk { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #2563EB, stop:1 #22D3EE); border-radius: 4px; }
+QSplitter::handle { background: #1F2937; }
+QSplitter::handle:hover { background: #3B82F6; }
+QStatusBar { background: #111827; border-top: 1px solid #1F2937; color: #94A3B8; }
+QToolTip { background: #1E293B; color: #F1F5F9; border: 1px solid #475569; padding: 4px 6px; }
+QMessageBox, QDialog { background: #111827; }
+QFrame#loadingOverlay { background: rgba(11, 17, 32, 210); border-radius: 8px; }
+QWidget#sidebarHeader { background: #111827; border-right: 1px solid #1F2937; border-bottom: 1px solid #1F2937; }
+QFrame#popup { background: #111827; border: 1px solid #475569; border-radius: 8px; }
+QPushButton#primarySmall { background: #2563EB; color: #FFFFFF; border: none; font-weight: 600; padding: 5px 18px; }
+QPushButton#primarySmall:hover { background: #3B82F6; }
+QHeaderView#filterHeader::section { padding-right: 34px; }
+QHeaderView#filterHeader::up-arrow, QHeaderView#filterHeader::down-arrow { image: none; width: 0px; height: 0px; }
 """
 
 
@@ -127,11 +173,27 @@ class RowsTableModel(QAbstractTableModel):
         self._headers: list[str] = []
         self._tooltips: list[str] = []
         self._rows: list[list] = []
+        self._original: list[list] = []
+        self.foreground = None  # optional (row, column) -> QColor | None
+
+    @property
+    def rows(self) -> list[list]:
+        return self._rows
 
     def set_table(self, headers: list[str], rows: list[list], tooltips: list[str] | None = None) -> None:
         self.beginResetModel()
-        self._headers, self._rows, self._tooltips = headers, rows, tooltips or headers
+        self._headers, self._tooltips = headers, tooltips or headers
+        self._original, self._rows = rows, list(rows)
         self.endResetModel()
+
+    def sort(self, column: int, order=Qt.AscendingOrder) -> None:
+        """Sort by one column (blanks first, numbers numerically); column -1 restores file order."""
+        self.layoutAboutToBeChanged.emit()
+        if 0 <= column < len(self._headers):
+            self._rows = sorted(self._original, key=lambda r: sort_key(r[column]), reverse=order == Qt.DescendingOrder)
+        else:
+            self._rows = list(self._original)
+        self.layoutChanged.emit()
 
     def rowCount(self, parent=QModelIndex()) -> int:  # noqa: N802 (Qt API)
         return 0 if parent.isValid() else len(self._rows)
@@ -143,6 +205,8 @@ class RowsTableModel(QAbstractTableModel):
         if role in (Qt.DisplayRole, Qt.ToolTipRole):
             value = self._rows[index.row()][index.column()]
             return "" if value is None else str(value)
+        if role == Qt.ForegroundRole and self.foreground:
+            return self.foreground(self._rows[index.row()], index.column())
         return None
 
     def headerData(self, section, orientation, role=Qt.DisplayRole):  # noqa: N802 (Qt API)
@@ -162,16 +226,22 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
 
-        self.setWindowTitle("DSJSON Converter")
+        self.setWindowTitle("dsjson")
         self.setMinimumSize(1000, 640)
         self.resize(1360, 860)
-        self.setStyleSheet(STYLE)
-        palette = self.palette()  # checkbox / selection accent = primary, not the Windows accent
-        palette.setColor(QPalette.Highlight, QColor("#1E40AF"))
-        palette.setColor(QPalette.HighlightedText, QColor("#FFFFFF"))
+        self.setStyleSheet(STYLE.replace("@CHEVRON@", CHEVRON))
+        palette = self.palette()  # dark palette for what the stylesheet does not draw (checkboxes, menus)
+        for role, color in (
+            (QPalette.Window, "#0B1120"), (QPalette.WindowText, "#E2E8F0"), (QPalette.Base, "#0F172A"),
+            (QPalette.AlternateBase, "#151E2E"), (QPalette.Text, "#E2E8F0"), (QPalette.Button, "#1E293B"),
+            (QPalette.ButtonText, "#E2E8F0"), (QPalette.PlaceholderText, "#64748B"),
+            (QPalette.Highlight, "#2563EB"), (QPalette.HighlightedText, "#FFFFFF"),
+            (QPalette.ToolTipBase, "#1E293B"), (QPalette.ToolTipText, "#F1F5F9"),
+        ):
+            palette.setColor(role, QColor(color))
         self.setPalette(palette)
 
-        self.settings = QSettings("dsjson", "DSJSON Converter")
+        self.settings = QSettings("dsjson", "dsjson")
         self.worker_thread: QThread | None = None
         self.worker: ConversionWorker | None = None
         self.results: list[dict] = []
@@ -181,7 +251,7 @@ class MainWindow(QMainWindow):
         self._build_results()
 
         splitter = QSplitter(Qt.Horizontal)
-        splitter.addWidget(self.sidebar_scroll)
+        splitter.addWidget(self.sidebar_panel)
         splitter.addWidget(self.results_panel)
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([410, 950])
@@ -250,6 +320,11 @@ class MainWindow(QMainWindow):
         count_row.addWidget(select_none)
         folder_layout.addLayout(count_row)
         folder_layout.addWidget(self.dataset_list, 1)
+        self.excluded_note = QLabel("")  # why some datasets are greyed out
+        self.excluded_note.setObjectName("warning")
+        self.excluded_note.setWordWrap(True)
+        self.excluded_note.hide()
+        folder_layout.addWidget(self.excluded_note)
 
         single_page = QWidget()
         single_layout = QVBoxLayout(single_page)
@@ -285,16 +360,8 @@ class MainWindow(QMainWindow):
         sidebar = QWidget()
         sidebar.setObjectName("sidebar")
         layout = QVBoxLayout(sidebar)
-        layout.setContentsMargins(20, 20, 20, 16)
+        layout.setContentsMargins(20, 14, 20, 16)
         layout.setSpacing(12)
-
-        title = QLabel("DSJSON Converter")
-        title.setObjectName("appTitle")
-        subtitle = QLabel("SDTM XPT + Define-XML to CDISC Dataset-JSON v1.1")
-        subtitle.setObjectName("muted")
-        subtitle.setWordWrap(True)
-        layout.addWidget(title)
-        layout.addWidget(subtitle)
 
         layout.addWidget(self._card("1  Define-XML", self._picker_row(self.define_input, self.browse_define_file, "Browse")))
 
@@ -330,6 +397,27 @@ class MainWindow(QMainWindow):
         self.sidebar_scroll.setWidgetResizable(True)
         self.sidebar_scroll.setMinimumWidth(390)  # fits path + Browse button at 100-150% scaling
         self.sidebar_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
+        # Heading stays put; only the steps below it scroll
+        header = QWidget()
+        header.setObjectName("sidebarHeader")
+        header_layout = QVBoxLayout(header)
+        header_layout.setContentsMargins(20, 18, 20, 14)
+        header_layout.setSpacing(2)
+        title = QLabel("dsjson")
+        title.setObjectName("appTitle")
+        subtitle = QLabel("SDTM XPT + Define-XML to CDISC Dataset-JSON v1.1")
+        subtitle.setObjectName("muted")
+        subtitle.setWordWrap(True)
+        header_layout.addWidget(title)
+        header_layout.addWidget(subtitle)
+
+        self.sidebar_panel = QWidget()
+        panel_layout = QVBoxLayout(self.sidebar_panel)
+        panel_layout.setContentsMargins(0, 0, 0, 0)
+        panel_layout.setSpacing(0)
+        panel_layout.addWidget(header)
+        panel_layout.addWidget(self.sidebar_scroll, 1)
 
     def _card(self, title: str, body) -> QFrame:
         card = QFrame()
@@ -392,10 +480,11 @@ class MainWindow(QMainWindow):
             stats.addWidget(frame, 0, col)
         layout.addLayout(stats)
 
-        # Dataset picker shared by Preview / Columns / Validation
-        picker = QHBoxLayout()
-        title = QLabel("Results")
-        title.setObjectName("sectionTitle")
+        # Dataset picker for Preview / Columns / Validation (hidden on Summary and Logs)
+        self.dataset_bar = QWidget()
+        picker = QHBoxLayout(self.dataset_bar)
+        picker.setContentsMargins(0, 0, 0, 0)
+        picker.addStretch(1)
         self.dataset_combo = QComboBox()
         self.dataset_combo.setMinimumWidth(200)
         self.dataset_combo.setAccessibleName("Dataset to inspect")
@@ -403,12 +492,9 @@ class MainWindow(QMainWindow):
         self.open_json_button = QPushButton("Open JSON file")
         self.open_json_button.clicked.connect(self.open_current_json)
         self.open_json_button.setEnabled(False)
-        picker.addWidget(title)
-        picker.addStretch(1)
         picker.addWidget(QLabel("Dataset"))
         picker.addWidget(self.dataset_combo)
         picker.addWidget(self.open_json_button)
-        layout.addLayout(picker)
 
         self.tabs = QTabWidget()
         self.tabs.setDocumentMode(False)
@@ -428,28 +514,25 @@ class MainWindow(QMainWindow):
         self.summary_stack.addWidget(self.summary_empty)
         self.summary_stack.addWidget(self.summary_table)
 
-        # Preview (all rows, filterable)
-        self.preview_model = RowsTableModel(self)
-        self.preview_proxy = QSortFilterProxyModel(self)
-        self.preview_proxy.setSourceModel(self.preview_model)
-        self.preview_proxy.setFilterKeyColumn(-1)
-        self.preview_proxy.setFilterCaseSensitivity(Qt.CaseInsensitive)
-        self.preview_view = QTableView()
-        self.preview_view.setModel(self.preview_proxy)
-        self._style_table(self.preview_view)
-        self.preview_view.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
-        self.preview_filter = QLineEdit()
-        self.preview_filter.setPlaceholderText("Filter rows (press Enter), e.g. 01-701-1015")
-        self.preview_filter.setClearButtonEnabled(True)
-        self.preview_filter.returnPressed.connect(self.apply_preview_filter)
-        self.preview_filter.textChanged.connect(lambda t: t or self.apply_preview_filter())
+        # Preview (all rows): click a column name to sort, its funnel (or right-click) to filter
+        self.preview_model, self.preview_proxy, self.preview_view = self._filter_table()
+        self.preview_view.horizontalHeader().sortIndicatorChanged.connect(self._update_preview_info)
+        self.filter_summary = QLabel("")  # active filters and sort, in words
+        self.filter_summary.setTextFormat(Qt.RichText)
+        self.filter_summary.setWordWrap(True)
+        self.clear_filters_button = self._link_button("Clear filters", self.clear_preview_filters)
+        self.clear_filters_button.hide()
+        self.clear_sort_button = self._link_button("Clear sort", self.clear_preview_sort)
+        self.clear_sort_button.hide()
         self.preview_info = QLabel("")
         self.preview_info.setObjectName("muted")
         self.preview_page = QWidget()
         preview_layout = QVBoxLayout(self.preview_page)
         preview_layout.setContentsMargins(8, 8, 8, 8)
         filter_row = QHBoxLayout()
-        filter_row.addWidget(self.preview_filter, 1)
+        filter_row.addWidget(self.filter_summary, 1)
+        filter_row.addWidget(self.clear_filters_button)
+        filter_row.addWidget(self.clear_sort_button)
         filter_row.addWidget(self.preview_info)
         preview_layout.addLayout(filter_row)
         preview_layout.addWidget(self.preview_view, 1)
@@ -463,14 +546,29 @@ class MainWindow(QMainWindow):
         # Validation report + logs
         self.validation_status = QLabel("")
         self.validation_status.setObjectName("sectionTitle")
-        self.validation_output = QPlainTextEdit()
-        self.validation_output.setObjectName("mono")
-        self.validation_output.setReadOnly(True)
+        self.validation_status.setTextFormat(Qt.RichText)
+        self.open_report_button = self._link_button("Open report file", self.open_current_report)
+        self.open_report_button.hide()
+        self.validation_model, self.validation_proxy, self.validation_view = self._filter_table()
+        self.validation_model.foreground = (
+            lambda row, col: (FAIL_COLOR if row[0] == "Error" else WARN_COLOR) if col == 0 else None
+        )
+        self.validation_empty = QLabel("")
+        self.validation_empty.setObjectName("muted")
+        self.validation_empty.setAlignment(Qt.AlignCenter)
+        self.validation_empty.setWordWrap(True)
+        self.validation_stack = QStackedWidget()
+        self.validation_stack.addWidget(self.validation_empty)
+        self.validation_stack.addWidget(self.validation_view)
         validation_page = QWidget()
         validation_layout = QVBoxLayout(validation_page)
         validation_layout.setContentsMargins(8, 8, 8, 8)
-        validation_layout.addWidget(self.validation_status)
-        validation_layout.addWidget(self.validation_output, 1)
+        status_row = QHBoxLayout()
+        status_row.addWidget(self.validation_status, 1)
+        status_row.addWidget(self.open_report_button)
+        validation_layout.addLayout(status_row)
+        validation_layout.addWidget(self.validation_stack, 1)
+        self.report_path: Path | None = None
 
         self.log_output = QPlainTextEdit()
         self.log_output.setObjectName("mono")
@@ -491,7 +589,62 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.columns_table, "Columns")
         self.tabs.addTab(validation_page, "Validation report")
         self.tabs.addTab(logs_page, "Logs")
+        self.dataset_pages = (self.preview_page, self.columns_table, validation_page)
+        self.tabs.currentChanged.connect(self._on_tab_changed)
+        self._on_tab_changed(self.tabs.currentIndex())
+        policy = self.dataset_bar.sizePolicy()
+        policy.setRetainSizeWhenHidden(True)  # tabs do not jump when the picker hides
+        self.dataset_bar.setSizePolicy(policy)
+        layout.addWidget(self.dataset_bar)
         layout.addWidget(self.tabs, 1)
+
+        # "Loading <dataset>" card shown over the tabs while a large dataset is read
+        self.loading_overlay = QFrame(self.tabs)
+        self.loading_overlay.setObjectName("loadingOverlay")
+        overlay_layout = QVBoxLayout(self.loading_overlay)
+        overlay_layout.setAlignment(Qt.AlignCenter)
+        card = QFrame()
+        card.setObjectName("card")
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(36, 24, 36, 24)
+        self.loading_title = QLabel("")
+        self.loading_title.setObjectName("sectionTitle")
+        self.loading_title.setAlignment(Qt.AlignCenter)
+        self.loading_detail = QLabel("")
+        self.loading_detail.setObjectName("muted")
+        self.loading_detail.setAlignment(Qt.AlignCenter)
+        loading_bar = QProgressBar()
+        loading_bar.setRange(0, 0)  # busy indicator
+        loading_bar.setTextVisible(False)
+        loading_bar.setFixedWidth(220)
+        card_layout.addWidget(self.loading_title)
+        card_layout.addWidget(self.loading_detail)
+        card_layout.addWidget(loading_bar, 0, Qt.AlignCenter)
+        overlay_layout.addWidget(card)
+        self.loading_overlay.hide()
+
+    def _on_tab_changed(self, index: int) -> None:
+        self.dataset_bar.setVisible(self.tabs.widget(index) in self.dataset_pages)
+
+    def _filter_table(self):
+        """Read-only table with Excel-style header: click to sort, funnel or right-click to filter."""
+        model = RowsTableModel(self)
+        proxy = RowsFilterProxy(self)
+        proxy.setSourceModel(model)
+        view = QTableView()
+        header = FilterHeader(view)
+        view.setHorizontalHeader(header)
+        view.setModel(proxy)
+        self._style_table(view)
+        header.setSectionResizeMode(QHeaderView.Interactive)
+        header.setStretchLastSection(True)
+        header.setToolTip("Click a column name to sort. Click the funnel or right-click to filter.")
+        header.setSortIndicator(-1, Qt.AscendingOrder)
+        header.setSortIndicatorClearable(True)  # click: ascending, descending, then file order again
+        header.setResizeContentsPrecision(200)  # fit widths on 200 rows, not 1000: 5x faster on big data
+        view.setSortingEnabled(True)
+        header.filter_requested.connect(lambda col, pos: self.open_column_filter(view, col, pos))
+        return model, proxy, view
 
     @staticmethod
     def _style_table(table) -> None:
@@ -505,25 +658,29 @@ class MainWindow(QMainWindow):
     # Pickers
     # ------------------------------------------------------------------
     def browse_define_file(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Select Define-XML", self._start_dir(self.define_input), "XML Files (*.xml);;All Files (*.*)")
+        with self._blurred():
+            path, _ = QFileDialog.getOpenFileName(self, "Select Define-XML", self._start_dir(self.define_input), "XML Files (*.xml);;All Files (*.*)")
         if path:
             self.define_input.setText(path)
             self.refresh_dataset_list()
 
     def browse_xpt_folder(self) -> None:
-        path = QFileDialog.getExistingDirectory(self, "Select XPT Folder", self._start_dir(self.folder_input))
+        with self._blurred():
+            path = QFileDialog.getExistingDirectory(self, "Select XPT Folder", self._start_dir(self.folder_input))
         if path:
             self.folder_input.setText(path)
             self.refresh_dataset_list()
 
     def browse_xpt_file(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Select XPT File", self._start_dir(self.xpt_input), "XPT Files (*.xpt);;All Files (*.*)")
+        with self._blurred():
+            path, _ = QFileDialog.getOpenFileName(self, "Select XPT File", self._start_dir(self.xpt_input), "XPT Files (*.xpt);;All Files (*.*)")
         if path:
             self.xpt_input.setText(path)
             self.domain_input.setText(Path(path).stem.upper())
 
     def browse_output_folder(self) -> None:
-        path = QFileDialog.getExistingDirectory(self, "Select Output Folder", self._start_dir(self.output_input))
+        with self._blurred():
+            path = QFileDialog.getExistingDirectory(self, "Select Output Folder", self._start_dir(self.output_input))
         if path:
             self.output_input.setText(path)
 
@@ -538,6 +695,7 @@ class MainWindow(QMainWindow):
         folder = self.folder_input.text().strip()
         define = self.define_input.text().strip()
 
+        self.excluded_note.hide()
         if not folder or not Path(folder).is_dir():
             self.selection_count.setText("Pick a folder and Define-XML to list datasets")
             return
@@ -564,6 +722,19 @@ class MainWindow(QMainWindow):
             self.dataset_list.addItem(item)
         self.dataset_list.blockSignals(False)
         self._update_selection_count()
+
+        missing = [] if define_names is None else sorted(
+            self.dataset_list.item(i).text() for i in range(self.dataset_list.count())
+            if self.dataset_list.item(i).text() not in define_names
+        )
+        if missing:
+            names = ", ".join(missing[:8]) + (f" and {len(missing) - 8} more" if len(missing) > 8 else "")
+            verb = "is" if len(missing) == 1 else "are"
+            self.excluded_note.setText(
+                f"{names} {verb} not in the selected Define-XML, so {'it' if len(missing) == 1 else 'they'} "
+                "cannot be converted. Check that step 1 and step 2 are the same study."
+            )
+        self.excluded_note.setVisible(bool(missing))
 
     def _set_all_checked(self, checked: bool) -> None:
         self.dataset_list.blockSignals(True)
@@ -619,7 +790,8 @@ class MainWindow(QMainWindow):
         elif not output_dir:
             problem = ("Output folder missing", "Choose where to write the results in step 3.", self.output_input)
         if problem:
-            QMessageBox.warning(self, problem[0], problem[1])
+            with self._blurred():
+                QMessageBox.warning(self, problem[0], problem[1])
             problem[2].setFocus()
             return
 
@@ -671,13 +843,14 @@ class MainWindow(QMainWindow):
     def show_summary(self, results: list) -> None:
         """One row per dataset in the Summary tab, plus stat cards and the dataset picker."""
         self.results = results
+        report_dir = Path(self.output_input.text().strip()) / "validation_report"
         self.summary_table.setSortingEnabled(False)
         self.summary_table.setRowCount(len(results))
         bold = QFont()
         bold.setBold(True)
         for row, result in enumerate(results):
             for col, key in enumerate(SUMMARY_KEYS):
-                value = result.get(key, "")
+                value = self._details(result, report_dir) if key == "message" else result.get(key, "")
                 item = QTableWidgetItem()
                 if isinstance(value, (int, float)):
                     item.setData(Qt.DisplayRole, value)  # numeric sort
@@ -689,6 +862,8 @@ class MainWindow(QMainWindow):
                     item.setForeground(QBrush(PASS_COLOR if value == "PASS" else FAIL_COLOR if value == "FAIL" else MUTED_COLOR))
                 if key == "warnings" and value:
                     item.setToolTip("Data does not fit the Define-XML type. See the Validation report tab.")
+                if key == "message":
+                    item.setToolTip(value)
                 self.summary_table.setItem(row, col, item)
         self.summary_table.setSortingEnabled(True)
         self.summary_table.sortByColumn(0, Qt.AscendingOrder)
@@ -702,6 +877,29 @@ class MainWindow(QMainWindow):
         self.dataset_combo.addItems([r["dataset"] for r in results if (output_dir / f"{r['dataset']}.json").exists()])
         self.dataset_combo.setCurrentIndex(-1)
         self.dataset_combo.blockSignals(False)
+
+    @staticmethod
+    def _details(result: dict, report_dir: Path) -> str:
+        """Failure reason, or what the warnings are (grouped); blank when there is nothing to say."""
+        if result.get("message"):
+            return result["message"]
+        path = report_dir / f"{result['dataset']}_validation.json"
+        if not result.get("warnings") or not path.exists():
+            return ""
+        report = json.loads(path.read_text(encoding="utf-8"))
+        counts = Counter(
+            w.get("message", "") if isinstance(w, dict) else str(w)
+            for part in ("metadata", "rows")
+            for w in report.get(part, {}).get("warnings", [])
+        )
+        parts = []
+        for message, n in counts.most_common():
+            m = re.fullmatch(r"Value for (\S+) expected (\w+) but got (\w+)", message)
+            parts.append(
+                f"{m.group(1)}: Define-XML says {m.group(2)}, {n:,} value(s) are {m.group(3)}" if m
+                else f"{message} ({n:,}x)" if n > 1 else message
+            )
+        return "; ".join(parts)
 
     def _set_stats(self, results: list | None) -> None:
         if not results:
@@ -726,7 +924,8 @@ class MainWindow(QMainWindow):
         if self.summary_table.rowCount():
             self.summary_table.selectRow(0)
         if not success:
-            QMessageBox.warning(self, "Finished with problems", message + "\n\nSee the Summary and Logs tabs.")
+            with self._blurred():
+                QMessageBox.warning(self, "Finished with problems", message + "\n\nSee the Summary and Logs tabs.")
 
     def on_summary_selection(self) -> None:
         rows = self.summary_table.selectionModel().selectedRows()
@@ -747,15 +946,22 @@ class MainWindow(QMainWindow):
         if not dataset or not json_path.exists():
             return
 
+        records = next((r.get("records") for r in self.results if r.get("dataset") == dataset), None)
+        self.loading_title.setText(f"Loading {dataset}")
+        self.loading_detail.setText(f"{records:,} records" if records else "")
+        self.loading_overlay.setGeometry(self.tabs.rect())
+        self.loading_overlay.raise_()
+        self.loading_overlay.show()
         self.setCursor(Qt.WaitCursor)
+        QApplication.processEvents(QEventLoop.ExcludeUserInputEvents)  # paint the overlay before the work starts
         try:
-            dataset_json = json.loads(json_path.read_text(encoding="utf-8"))
-            self.show_dataset_json(dataset_json)
-            report_path = output_dir / "validation_report" / f"{dataset}_validation.json"
-            self._show_validation(report_path)
+            self.show_dataset_json(json.loads(json_path.read_text(encoding="utf-8")))
+            self._show_validation(output_dir / "validation_report" / f"{dataset}_validation.json")
         except Exception as exc:
-            QMessageBox.critical(self, "Unable to open Dataset-JSON", f"{json_path}\n\n{exc}")
+            with self._blurred():
+                QMessageBox.critical(self, "Unable to open Dataset-JSON", f"{json_path}\n\n{exc}")
         finally:
+            self.loading_overlay.hide()
             self.unsetCursor()
 
     def show_dataset_json(self, dataset_json: dict) -> None:
@@ -765,16 +971,24 @@ class MainWindow(QMainWindow):
 
         headers = [c.get("name", "") for c in columns]
         tooltips = [f"{c.get('name', '')}: {c.get('label', '')}\nType: {c.get('dataType', '')}" for c in columns]
-        self.preview_filter.clear()
+        header = self.preview_view.horizontalHeader()
+        self.preview_proxy.clear_filters()
+        header.filtered.clear()
+        header.setSortIndicator(-1, Qt.AscendingOrder)
         self.preview_model.set_table(headers, rows, tooltips)
         self.preview_view.resizeColumnsToContents()
         self._update_preview_info()
 
+        self.columns_table.setSortingEnabled(False)
         self.columns_table.setRowCount(len(columns))
         for r, c in enumerate(columns):
             values = [r + 1, c.get("name"), c.get("label"), c.get("dataType"), c.get("length"), c.get("keySequence"), c.get("itemOID")]
             for col, value in enumerate(values):
-                item = QTableWidgetItem("" if value is None else str(value))
+                item = QTableWidgetItem()
+                if isinstance(value, int):
+                    item.setData(Qt.DisplayRole, value)  # numeric sort
+                else:
+                    item.setText("" if value is None else str(value))
                 self.columns_table.setItem(r, col, item)
         self.columns_table.resizeColumnsToContents()
 
@@ -783,31 +997,147 @@ class MainWindow(QMainWindow):
         )
 
     def _show_validation(self, report_path: Path) -> None:
-        if not report_path.exists():
-            self.validation_status.setText("No validation report (validation was switched off)")
-            self.validation_output.clear()
+        """Errors and warnings of the selected dataset as a sortable, filterable table."""
+        self.validation_proxy.clear_filters()
+        self.validation_view.horizontalHeader().filtered.clear()
+        self.report_path = report_path if report_path.exists() else None
+        self.open_report_button.setVisible(self.report_path is not None)
+        if self.report_path is None:
+            self.validation_model.set_table(VALIDATION_HEADERS, [])
+            self.validation_status.setText("No validation report")
+            self.validation_empty.setText(
+                "Validation was switched off for this run. Tick the option in step 3 and convert again."
+            )
+            self.validation_stack.setCurrentWidget(self.validation_empty)
             return
+
         report = json.loads(report_path.read_text(encoding="utf-8"))
-        status = report.get("status", "")
+        issues: list[list] = []
+        for part, check in (("metadata", "Metadata (schema)"), ("rows", "Rows")):
+            section = report.get(part, {})
+            for severity, key in (("Error", "errors"), ("Warning", "warnings")):
+                for issue in section.get(key, []):
+                    if isinstance(issue, dict):
+                        issues.append([severity, check, str(issue.get("path") or ""), issue.get("message", "")])
+                    else:
+                        issues.append([severity, check, "", str(issue)])
+        self.validation_model.set_table(VALIDATION_HEADERS, issues)
+
         summary = report.get("summary", {})
-        color = PASS_COLOR.name() if status == "PASS" else FAIL_COLOR.name()
+        passed = report.get("status") == "PASS"
+        status, color = ("PASS", PASS_COLOR) if passed else ("FAIL", FAIL_COLOR)
         self.validation_status.setText(
-            f"<span style='color:{color}'>{html.escape(status)}</span> &nbsp; "
+            f"<span style='color:{color.name()}'>{status}</span> &nbsp; "
             f"{summary.get('errors', 0)} errors, {summary.get('warnings', 0)} warnings"
         )
-        self.validation_output.setPlainText(json.dumps(report, indent=2, ensure_ascii=False, default=str))
+        if issues:
+            self.validation_view.resizeColumnsToContents()
+            self.validation_stack.setCurrentWidget(self.validation_view)
+        else:
+            self.validation_empty.setText("No errors or warnings. Matches the Dataset-JSON v1.1 schema and Define-XML.")
+            self.validation_stack.setCurrentWidget(self.validation_empty)
 
-    def apply_preview_filter(self) -> None:
+    def open_current_report(self) -> None:
+        if self.report_path and self.report_path.exists():
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.report_path)))
+
+    # ------------------------------------------------------------------
+    # Excel-style sort and filter
+    # ------------------------------------------------------------------
+    def open_column_filter(self, view: QTableView, column: int, pos) -> None:
+        """Value list for one column, opened from the header funnel or a right-click."""
+        proxy = view.model()
         self.setCursor(Qt.WaitCursor)
         try:
-            self.preview_proxy.setFilterFixedString(self.preview_filter.text().strip())
+            values = proxy.distinct_values(column)
         finally:
             self.unsetCursor()
+        name = proxy.sourceModel().headerData(column, Qt.Horizontal)
+        popup = ColumnFilterPopup(name, values, proxy.column_filters.get(column), self)
+        popup.applied.connect(lambda chosen: self._apply_column_filter(view, column, chosen))
+        popup.sort_requested.connect(lambda order: self._sort_view(view, column, order))
+        popup.adjustSize()
+        screen = self.screen().availableGeometry()
+        popup.move(min(pos.x(), screen.right() - popup.width()), min(pos.y(), screen.bottom() - popup.height()))
+        self._set_blur(True)
+        popup.closed.connect(lambda: self._set_blur(False))
+        popup.show()
+
+    @staticmethod
+    def _sort_view(view: QTableView, column: int, order) -> None:
+        """order None clears the sort (file order)."""
+        if order is None:
+            view.horizontalHeader().setSortIndicator(-1, Qt.AscendingOrder)
+        else:
+            view.sortByColumn(column, order)
+
+    def _apply_column_filter(self, view: QTableView, column: int, chosen) -> None:
+        proxy = view.model()
+        self.setCursor(Qt.WaitCursor)
+        try:
+            proxy.set_column_filter(column, chosen)
+        finally:
+            self.unsetCursor()
+        view.horizontalHeader().filtered = set(proxy.column_filters)
+        view.horizontalHeader().viewport().update()
         self._update_preview_info()
 
-    def _update_preview_info(self) -> None:
-        shown, total = self.preview_proxy.rowCount(), self.preview_model.rowCount()
-        self.preview_info.setText(f"{shown:,} of {total:,} rows" if shown != total else f"{total:,} rows")
+    def clear_preview_filters(self) -> None:
+        self.preview_proxy.clear_filters()
+        self.preview_view.horizontalHeader().filtered.clear()
+        self.preview_view.horizontalHeader().viewport().update()
+        self._update_preview_info()
+
+    def clear_preview_sort(self) -> None:
+        self._sort_view(self.preview_view, -1, None)
+
+    def _update_preview_info(self, *_) -> None:
+        """Bar above the preview: active filters and sort in words, with links to clear them."""
+        proxy, model = self.preview_proxy, self.preview_model
+        header = self.preview_view.horizontalHeader()
+        shown, total = proxy.rowCount(), model.rowCount()
+
+        parts = []
+        for column, allowed in sorted(proxy.column_filters.items()):
+            name = model.headerData(column, Qt.Horizontal)
+            values = sorted(v or BLANK_LABEL for v in allowed)
+            listed = ", ".join(values[:3]) + (f" +{len(values) - 3} more" if len(values) > 3 else "")
+            parts.append(f"<b>{html.escape(name)}</b> = {html.escape(listed)}")
+        sorted_by = header.sortIndicatorSection()
+        is_sorted = 0 <= sorted_by < model.columnCount()
+        if is_sorted:
+            direction = "ascending" if header.sortIndicatorOrder() == Qt.AscendingOrder else "descending"
+            parts.append(f"sorted by <b>{html.escape(model.headerData(sorted_by, Qt.Horizontal))}</b> ({direction})")
+
+        if parts:
+            self.filter_summary.setText(" &nbsp;·&nbsp; ".join(parts))
+        elif total:
+            self.filter_summary.setText("Click a column name to sort. Click its funnel or right-click it to filter.")
+        else:
+            self.filter_summary.setText("")
+        self.clear_filters_button.setVisible(bool(proxy.column_filters))
+        self.clear_sort_button.setVisible(is_sorted)
+        self.preview_info.setText(f"{shown:,} of {total:,} rows" if proxy.column_filters else f"{total:,} rows" if total else "")
+
+    # ------------------------------------------------------------------
+    # Background blur behind popups and dialogs
+    # ------------------------------------------------------------------
+    def _set_blur(self, on: bool) -> None:
+        if on:
+            effect = QGraphicsBlurEffect(self)
+            effect.setBlurRadius(5)
+            effect.setBlurHints(QGraphicsBlurEffect.PerformanceHint)
+            self.centralWidget().setGraphicsEffect(effect)
+        else:
+            self.centralWidget().setGraphicsEffect(None)
+
+    @contextmanager
+    def _blurred(self):
+        self._set_blur(True)
+        try:
+            yield
+        finally:
+            self._set_blur(False)
 
     def open_current_json(self) -> None:
         dataset = self.dataset_combo.currentText()
@@ -819,14 +1149,16 @@ class MainWindow(QMainWindow):
         if folder and Path(folder).is_dir():
             QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
         else:
-            QMessageBox.information(self, "No output folder", "Choose an existing output folder in step 3 first.")
+            with self._blurred():
+                QMessageBox.information(self, "No output folder", "Choose an existing output folder in step 3 first.")
 
     # ------------------------------------------------------------------
     # Logs, settings, reset
     # ------------------------------------------------------------------
     def append_log(self, message: str) -> None:
         """Add a log line (warnings amber, errors red) and drive the progress bar."""
-        color = "#B91C1C" if ("ERROR" in message or "failed" in message.lower()) else "#B45309" if "WARNING" in message else "#0F172A"
+        color = (FAIL_COLOR if ("ERROR" in message or "failed" in message.lower())
+                 else WARN_COLOR if "WARNING" in message else TEXT_COLOR).name()
         self.log_output.appendHtml(f"<span style='color:{color}; white-space:pre'>{html.escape(message)}</span>")
 
         started = re.search(r"\[(\w+)\] START", message)
@@ -868,10 +1200,12 @@ class MainWindow(QMainWindow):
         self.summary_stack.setCurrentWidget(self.summary_empty)
         self.dataset_combo.clear()
         self.preview_model.set_table([], [])
+        self.preview_proxy.clear_filters()
         self._update_preview_info()
         self.columns_table.setRowCount(0)
-        self.validation_output.clear()
+        self.validation_model.set_table([], [])
         self.validation_status.clear()
+        self.open_report_button.hide()
         self.log_output.clear()
         self._set_stats(None)
         self._save_settings()

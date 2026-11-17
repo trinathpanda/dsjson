@@ -13,8 +13,8 @@ def main() -> int:
     """Start the dsjson desktop application."""
     app = QApplication(sys.argv)
     app.setOrganizationName("dsjson")
-    app.setApplicationName("DSJSON Converter")
-    app.styleHints().setColorScheme(Qt.ColorScheme.Light)  # stylesheet is light; ignore Windows dark mode
+    app.setApplicationName("dsjson")
+    app.styleHints().setColorScheme(Qt.ColorScheme.Dark)  # stylesheet is dark; same look whatever the Windows theme
     app.setStyle("Fusion")  # same look on every Windows version; stylesheet in main_window
     app.setFont(QFont("Segoe UI", 10))
 
