@@ -65,14 +65,24 @@ python -m venv .venv
 
 1. **Define-XML:** pick the study's `define.xml`.
 2. **SDTM data:** choose **Whole folder** (all `.xpt` files that Define-XML describes are
-   listed and ticked) or **Single XPT**.
+   listed and ticked) or **Single XPT**. Files that the chosen Define-XML does not describe
+   are greyed out, with a note naming them (usually Define-XML and data from different studies).
 3. **Output:** pick a folder; keep validation on.
 4. Click **Convert to Dataset-JSON** (or press Ctrl+Enter).
 
-Results appear on the right: totals (datasets, passed, failed, records, time) and tabs for
-**Summary** (one row per dataset), **Data preview** (all rows, with a filter),
-**Columns** (variable metadata), **Validation report** and **Logs**. Paths are remembered
-between runs. The app converts in-process; no data leaves the computer.
+Results appear on the right, in a dark theme:
+
+| Tab | Shows |
+|---|---|
+| **Summary** | One row per dataset: status, records, columns, errors, warnings, time. **Details** gives the failure reason, or which variables do not fit their Define-XML type (e.g. `LBSTRESN: Define-XML says integer, 35,431 value(s) are float`); blank when all is fine. |
+| **Data preview** | All rows of the selected dataset. Click a column name to sort (ascending, descending, then file order). Click the funnel or right-click a column to filter by its distinct values, like Excel. A bar above the table lists active filters and sort, with **Clear filters** / **Clear sort**. |
+| **Columns** | Variable metadata: name, label, data type, length, key sequence, item OID. |
+| **Validation report** | PASS/FAIL with error and warning counts, and every issue as a sortable, filterable table; **Open report file** opens the JSON report. |
+| **Logs** | The conversion log (warnings amber, errors red). |
+
+Pick the dataset to inspect in the **Dataset** list above the tabs (or click a row in
+Summary). Paths are remembered between runs. The app converts in-process; no data leaves
+the computer.
 
 ## Command line
 
@@ -142,7 +152,7 @@ results = service.convert_folder("sdtm/", "define.xml", "output", "output/valida
 |---|---|
 | `tests/test_define_versions.py` | Define-XML 1.0 and 2.x parsing, labels, types, keys, errors |
 | `tests/test_batch.py` | Batch conversion; all 22 pilot datasets against the CDISC reference |
-| `tests/test_desktop.py` | Desktop worker and window (offscreen Qt) |
+| `tests/test_desktop.py` | Desktop worker and window (offscreen Qt): dataset list, preview, column filter and sort, Details text |
 
 Pilot-data tests skip when the data has not been downloaded. The older
 `tests/test_pipeline.py`, `test_validator.py`, `test_xptreader.py` and
@@ -159,7 +169,7 @@ dsjson/
   builder/dataset_json.py         Dataset-JSON v1.1 builder
   validation/                     JSON Schema + row validation (schema bundled)
   reports/                        validation and batch summary reports
-desktop_app/                      PySide6 desktop app (in-process worker)
+desktop_app/                      PySide6 desktop app (in-process worker, Excel-style table filter)
 scripts/                          pilot data download and reference comparison
 tests/                            pytest suite
 ```
