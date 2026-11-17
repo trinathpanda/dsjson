@@ -1,0 +1,77 @@
+"""Desktop app smoke tests (offscreen Qt, no clicks needed)."""
+
+import os
+from pathlib import Path
+
+import pytest
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+
+from desktop_app.main_window import MainWindow  # noqa: E402
+from desktop_app.worker import ConversionWorker  # noqa: E402
+
+ROOT = Path(__file__).resolve().parent.parent
+PILOT = ROOT / "demo" / "input" / "cdiscpilot01"
+
+
+@pytest.fixture(scope="module")
+def app():
+    return QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+
+
+def _run(worker):
+    logs, results, finished = [], [], []
+    worker.log_message.connect(logs.append)
+    worker.results_ready.connect(results.extend)
+    worker.finished.connect(lambda ok, msg: finished.append((ok, msg)))
+    worker.run()  # same thread: signals are delivered directly
+    return logs, results, finished
+
+
+def test_worker_single_file_in_process(app, tmp_path):
+    logs, results, finished = _run(ConversionWorker(
+        define_path=str(ROOT / "demo" / "input" / "define.xml"),
+        output_dir=str(tmp_path),
+        domain="DM",
+        xpt_path=str(ROOT / "demo" / "input" / "sdtm" / "DM.xpt"),
+    ))
+    assert finished == [(True, "1 dataset(s) converted successfully.")]
+    assert results[0]["status"] == "PASS"
+    assert (tmp_path / "DM.json").exists() and (tmp_path / "validation_report" / "DM_validation.json").exists()
+    assert any("[DM] DONE" in line for line in logs)
+
+
+def test_worker_batch_and_window_dataset_list(app, tmp_path):
+    if not (PILOT / "define.xml").exists():
+        pytest.skip("pilot data missing (run scripts/fetch_pilot_data.py)")
+
+    window = MainWindow()
+    window.define_input.setText(str(PILOT / "define.xml"))
+    window.folder_input.setText(str(PILOT / "sdtm"))
+    window.refresh_dataset_list()
+    assert window.dataset_list.count() == 22
+    assert len(window._checked_datasets()) == 22
+
+    _, results, finished = _run(ConversionWorker(
+        define_path=str(PILOT / "define.xml"),
+        output_dir=str(tmp_path),
+        data_dir=str(PILOT / "sdtm"),
+        datasets=["DM", "TS"],
+    ))
+    assert finished[0][0] is True
+
+    window.output_input.setText(str(tmp_path))
+    window.show_summary(results)
+    assert window.stat_values["passed"].text() == "2"
+    assert window.dataset_combo.count() == 2
+
+    window.dataset_combo.setCurrentText("DM")  # loads preview, columns, validation
+    assert window.open_json_button.isEnabled()
+    assert window.preview_model.rowCount() == 306  # all rows, no cap
+    assert window.columns_table.rowCount() == 25
+    assert "PASS" in window.validation_status.text()
+
+    window.preview_filter.setText("01-701-1015")
+    window.apply_preview_filter()
+    assert window.preview_proxy.rowCount() == 1
