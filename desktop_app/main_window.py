@@ -239,7 +239,7 @@ class MainWindow(QMainWindow):
             (QPalette.Window, "#0B1120"), (QPalette.WindowText, "#E2E8F0"), (QPalette.Base, "#0F172A"),
             (QPalette.AlternateBase, "#151E2E"), (QPalette.Text, "#E2E8F0"), (QPalette.Button, "#1E293B"),
             (QPalette.ButtonText, "#E2E8F0"), (QPalette.PlaceholderText, "#64748B"),
-            (QPalette.Highlight, "#2563EB"), (QPalette.HighlightedText, "#FFFFFF"),
+            (QPalette.Highlight, "#2563EB"), (QPalette.HighlightedText, "#FFFFFF"), (QPalette.Accent, "#2563EB"),
             (QPalette.ToolTipBase, "#1E293B"), (QPalette.ToolTipText, "#F1F5F9"),
         ):
             palette.setColor(role, QColor(color))
