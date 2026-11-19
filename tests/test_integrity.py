@@ -34,6 +34,10 @@ def test_file_level_fields_and_status():
     assert dataset_json["metaDataRef"] == "define.xml"
     assert dataset_json["sourceSystem"] == {"name": "dsjson", "version": __version__}
     assert len(dataset_json["dbLastModifiedDateTime"]) == 19  # YYYY-MM-DDTHH:MM:SS
+    spec_order = ["datasetJSONCreationDateTime", "datasetJSONVersion", "fileOID", "dbLastModifiedDateTime",
+                  "originator", "sourceSystem", "studyOID", "metaDataVersionOID", "metaDataRef",
+                  "itemGroupOID", "records", "name", "label", "columns", "rows"]
+    assert list(dataset_json) == [k for k in spec_order if k in dataset_json]  # v1.1 recommended order
 
     unchecked = ConversionService(validator=SchemaValidator(skip_validation=True))
     unchecked.convert("DM", str(DEFINE), str(DM_XPT))

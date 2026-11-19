@@ -184,6 +184,12 @@ scripts/                          pilot data download and reference comparison
 tests/                            pytest suite
 ```
 
+## Documentation
+
+- [docs/DSJSON_HANDBOOK.md](docs/DSJSON_HANDBOOK.md): everything in one place: how each part works, every check, tests, evidence, standards compliance, related tools, PHUSE readiness.
+- [docs/IMPROVEMENT_BACKLOG.md](docs/IMPROVEMENT_BACKLOG.md): prioritised improvements, including the v1.1 specification review.
+- [docs/GXP_ROADMAP.md](docs/GXP_ROADMAP.md): GxP readiness plan.
+
 ## Status and roadmap
 
 - Done: XPT + Define-XML to Dataset-JSON v1.1, batch conversion, validation reports,

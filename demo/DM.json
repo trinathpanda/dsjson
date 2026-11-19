@@ -1,5 +1,5 @@
 {
-    "datasetJSONCreationDateTime": "2026-11-19T19:33:30Z",
+    "datasetJSONCreationDateTime": "2026-11-19T20:55:50Z",
     "datasetJSONVersion": "1.1.0",
     "fileOID": "SYNTH-STUDY-001.dm",
     "dbLastModifiedDateTime": "2026-05-12T12:26:54",
@@ -11,9 +11,9 @@
     "metaDataVersionOID": "MDV.SYNTH-SDTM-001",
     "metaDataRef": "define.xml",
     "itemGroupOID": "IG.DM",
+    "records": 10,
     "name": "DM",
     "label": "Demographics",
-    "records": 10,
     "columns": [
         {
             "itemOID": "IT.STUDYID",

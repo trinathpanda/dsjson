@@ -159,9 +159,9 @@ class DatasetJSONBuilder:
                 dataset_json[key] = value
         dataset_json |= {
             "itemGroupOID": item_group_oid or f"IG.{ds}",
+            "records": len(rows),  # spec order: records before name/label (helps streaming readers)
             "name": ds,
             "label": dataset_label or ds,
-            "records": len(rows),
             "columns": columns,
             "rows": rows,
         }
