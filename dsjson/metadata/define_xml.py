@@ -105,6 +105,16 @@ class DefineXMLParser:
 
         raise DefineXMLDomainNotFoundError(domain)
 
+    def get_study_oid(self) -> Optional[str]:
+        """OID of the ODM Study, e.g. "CDISCPILOT01" (Dataset-JSON studyOID)."""
+        study = self.root.find("odm:Study", self.ns) if self.root is not None else None
+        return study.attrib.get("OID") if study is not None else None
+
+    def get_metadata_version_oid(self) -> Optional[str]:
+        """OID of the MetaDataVersion, e.g. "CDISC.SDTMIG.3.1.2" (Dataset-JSON metaDataVersionOID)."""
+        mdv = self.root.find(".//odm:MetaDataVersion", self.ns) if self.root is not None else None
+        return mdv.attrib.get("OID") if mdv is not None else None
+
     def get_item_group_oid(self, domain: str) -> Optional[str]:
         """OID of the dataset's ItemGroupDef, e.g. "IG.DM" or "DM"."""
         return self.get_domain(domain).attrib.get("OID")

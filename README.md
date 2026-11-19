@@ -25,13 +25,22 @@ SDTM XPT    (data: records and values)       merge + build      validation_repor
   `def:DomainKeys`.
 - **Validation:** every file is checked against the bundled Dataset-JSON v1.1 JSON Schema,
   plus row checks (row length, record count, values that do not fit the Define-XML type).
-- **Batch:** convert a whole folder in one run; one bad file does not stop the others.
+- **Safety checks:** a dataset fails (never a silent wrong file) when the XPT holds a
+  different dataset than the one named, or when a variable is only in Define-XML (empty
+  column) or only in the XPT (data would be dropped). With validation switched off the status
+  is `CONVERTED`, not `PASS`.
+- **File-level metadata:** `studyOID`, `metaDataVersionOID`, `metaDataRef` and `fileOID` come
+  from Define-XML; `dbLastModifiedDateTime` from the XPT file.
+- **Batch:** convert a whole folder in one run; one bad file does not stop the others, and
+  a run can be cancelled between datasets.
 
 ## Verified on the CDISC pilot study
 
 All 22 SDTM datasets of the public CDISC pilot study (CDISCPILOT01, Define-XML 1.0,
-~295,000 records) convert and pass validation in about 15 seconds. Compared with CDISC's
-own reference Dataset-JSON files, **every cell value matches** except 3 apostrophes in TS:
+~295,000 records) convert and pass validation in about 20 seconds (11 seconds without
+validation; Windows 11 laptop). Compared with CDISC's own reference Dataset-JSON files,
+**every cell value matches** except 3 apostrophes in TS, and the five file-level fields
+above match too (TS `dbLastModifiedDateTime` differs: CDISC rebuilt its TS in 2024):
 
 | Result | Datasets |
 |---|---|
@@ -145,18 +154,18 @@ results = service.convert_folder("sdtm/", "define.xml", "output", "output/valida
 
 ```bash
 .venv/Scripts/python scripts/fetch_pilot_data.py
-.venv/Scripts/python -m pytest tests/test_define_versions.py tests/test_batch.py tests/test_desktop.py -q
+.venv/Scripts/python -m pytest -q
 ```
 
 | Test file | Covers |
 |---|---|
 | `tests/test_define_versions.py` | Define-XML 1.0 and 2.x parsing, labels, types, keys, errors |
 | `tests/test_batch.py` | Batch conversion; all 22 pilot datasets against the CDISC reference |
+| `tests/test_integrity.py` | Wrong-dataset guard, Define-XML vs XPT variable checks, file-level fields, `CONVERTED` status, cancel |
 | `tests/test_desktop.py` | Desktop worker and window (offscreen Qt): dataset list, preview, column filter and sort, Details text |
 
-Pilot-data tests skip when the data has not been downloaded. The older
-`tests/test_pipeline.py`, `test_validator.py`, `test_xptreader.py` and
-`test_defineparser.py` are manual scripts without assertions.
+Pilot-data tests skip when the data has not been downloaded. Older manual scripts without
+assertions live in `scripts/manual/` (not collected by pytest).
 
 ## Project layout
 
@@ -179,8 +188,11 @@ tests/                            pytest suite
 - Done: XPT + Define-XML to Dataset-JSON v1.1, batch conversion, validation reports,
   desktop app, verification on the CDISC pilot study.
 - Next: Windows `.exe` packaging (PyInstaller).
-- Not yet: SAS7BDAT/CSV input, specification-file metadata, optional top-level fields
-  (`studyOID`, `metaDataVersionOID`, `sourceSystem`, ...), NDJSON output.
+- Not yet: SAS7BDAT/CSV input, specification-file metadata, `sourceSystem` and
+  `originator` fields, NDJSON output.
+- Later: GxP readiness (audit trail, reconciliation, IQ/OQ evidence), see
+  [docs/GXP_ROADMAP.md](docs/GXP_ROADMAP.md).
+- Releases are tagged (`v0.1.0`); the version shows in the app title.
 - Roadmap: offline desktop app (piloting) → reusable Python library → server-based
   automation.
 

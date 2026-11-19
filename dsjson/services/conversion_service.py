@@ -11,12 +11,12 @@ import os
 import time
 from collections import Counter
 from pathlib import Path
-from typing import Dict, List, Optional, Any, Iterable
+from typing import Any, Callable, Dict, Iterable, List, Optional
 
 from dsjson.metadata.define_xml import DefineXMLParser
 from dsjson.readers.xpt_reader import XPTReader
 from dsjson.builder.dataset_json import DatasetJSONBuilder
-from dsjson.validation.schema_validator import SchemaValidator, ValidationReport
+from dsjson.validation.schema_validator import SchemaValidator, ValidationIssue, ValidationReport
 from dsjson.reports.conversion_report import ConversionReport
 from dsjson.reports.validation_report import ValidationReportBuilder
 from dsjson.logging_config import get_logger
@@ -71,8 +71,23 @@ class ConversionService:
         # ------------------------------
         reader = XPTReader(xpt_path)
         reader.read()
+        if reader.dataset_name and reader.dataset_name != ds:
+            raise ValueError(
+                f"{Path(xpt_path).name} holds dataset {reader.dataset_name}, not {ds}. "
+                "Check the dataset name or pick the right file."
+            )
         xpt_cols = reader.get_dataset_json_columns()
         records = reader.get_records()
+        structure_errors = self._structure_issues(define_cols, xpt_cols)
+
+        study_oid = define_parser.get_study_oid()
+        file_metadata = {
+            "fileOID": f"{study_oid}.{ds.lower()}" if study_oid else None,
+            "dbLastModifiedDateTime": reader.modified_datetime(),
+            "studyOID": study_oid,
+            "metaDataVersionOID": define_parser.get_metadata_version_oid(),
+            "metaDataRef": Path(define_path).name,
+        }
 
         # ------------------------------
         # Build (detailed logs inside DatasetJSONBuilder)
@@ -85,12 +100,13 @@ class ConversionService:
             dataset_label=define_label,
             metadata_source=metadata_source,
             item_group_oid=item_group_oid,
+            file_metadata=file_metadata,
         )
 
         # ------------------------------
         # Validate once; reports are kept for write_outputs()
         # ------------------------------
-        report = self._validate(dataset_json, validate_rows, strict_records_count)
+        report = self._validate(dataset_json, validate_rows, strict_records_count, structure_errors)
 
         if report.ok:
             logger.info("[%s] Validation PASSED", ds)
@@ -128,14 +144,61 @@ class ConversionService:
 
         return dataset_json
 
-    def _validate(self, dataset_json: Dict[str, Any], validate_rows: bool, strict_records_count: bool) -> ValidationReport:
-        """Run metadata + row validation once and keep the parts for the report file."""
+    @staticmethod
+    def _structure_issues(define_cols: List[Dict], xpt_cols: List[Dict]) -> List[ValidationIssue]:
+        """Variables in only one of Define-XML / XPT: the output would hold empty columns or lose data."""
+        if not define_cols:
+            return []  # builder falls back to the XPT columns
+        define_names = [c.get("name", "").upper() for c in define_cols]
+        xpt_names = [c.get("name", "").upper() for c in xpt_cols]
+        issues = []
+        missing = [n for n in define_names if n not in set(xpt_names)]
+        if missing:
+            issues.append(ValidationIssue(
+                level="error",
+                message=f"In Define-XML but not in the XPT file (column would be empty): {', '.join(missing)}",
+                instance_path="/columns",
+            ))
+        extra = [n for n in xpt_names if n not in set(define_names)]
+        if extra:
+            issues.append(ValidationIssue(
+                level="error",
+                message=f"In the XPT file but not in Define-XML (data would be dropped): {', '.join(extra)}",
+                instance_path="/columns",
+            ))
+        return issues
+
+    def status(self) -> str:
+        """PASS / FAIL for the last convert(); CONVERTED when validation was switched off."""
+        full = self.last_validation[0]
+        if not full.ok:
+            return "FAIL"
+        return "CONVERTED" if self.validator.skip_validation else "PASS"
+
+    def _validate(
+        self,
+        dataset_json: Dict[str, Any],
+        validate_rows: bool,
+        strict_records_count: bool,
+        structure_errors: Optional[List[ValidationIssue]] = None,
+    ) -> ValidationReport:
+        """Run metadata + row validation once and keep the parts for the report file.
+
+        structure_errors (Define-XML vs XPT variables) fail the dataset even with validation off.
+        """
+        structure_errors = structure_errors or []
         if self.validator.skip_validation:
             full = self.validator.validate_dataset(dataset_json)
+            if structure_errors:
+                full = ValidationReport(ok=False, schema_used=full.schema_used, validated_part="dataset",
+                                        errors=structure_errors, warnings=full.warnings)
             self.last_validation = (full, None, None)
             return full
 
         meta = self.validator.validate_metadata(dataset_json)
+        if structure_errors:
+            meta.errors = (meta.errors or []) + structure_errors
+            meta.ok = False
         if validate_rows:
             rows = self.validator.validate_rows(dataset_json, strict_records_count=strict_records_count)
         else:
@@ -185,8 +248,12 @@ class ConversionService:
         out_dir: str,
         report_dir: Optional[str] = None,
         datasets: Optional[Iterable[str]] = None,
+        should_stop: Optional[Callable[[], bool]] = None,
     ) -> List[Dict[str, Any]]:
-        """Convert every XPT in data_dir that Define-XML describes; one failure does not stop the batch."""
+        """Convert every XPT in data_dir that Define-XML describes; one failure does not stop the batch.
+
+        should_stop is checked before each dataset; once it returns True the rest are SKIPPED ("Cancelled").
+        """
         define_parser = DefineXMLParser(define_path)
         define_parser.parse()
         define_names = set(define_parser.get_dataset_names())
@@ -207,6 +274,10 @@ class ConversionService:
                 logger.warning("[%s] XPT not described in Define-XML; skipped", ds)
                 results.append({"dataset": ds, "status": "SKIPPED", "message": "Not in Define-XML"})
                 continue
+            if should_stop and should_stop():
+                logger.warning("[%s] Cancelled before conversion", ds)
+                results.append({"dataset": ds, "status": "SKIPPED", "message": "Cancelled"})
+                continue
 
             start = time.time()
             row: Dict[str, Any] = {"dataset": ds}
@@ -217,7 +288,7 @@ class ConversionService:
                 row.update(
                     records=dataset_json["records"],
                     columns=len(dataset_json["columns"]),
-                    status="PASS" if full.ok else "FAIL",
+                    status=self.status(),
                     errors=len(full.errors or []),
                     warnings=len(full.warnings or []),
                     message="",

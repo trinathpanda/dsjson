@@ -1,6 +1,11 @@
 {
-    "datasetJSONCreationDateTime": "2026-08-21T06:28:58Z",
+    "datasetJSONCreationDateTime": "2026-11-19T19:12:29Z",
     "datasetJSONVersion": "1.1.0",
+    "fileOID": "SYNTH-STUDY-001.dm",
+    "dbLastModifiedDateTime": "2026-05-12T12:26:54",
+    "studyOID": "SYNTH-STUDY-001",
+    "metaDataVersionOID": "MDV.SYNTH-SDTM-001",
+    "metaDataRef": "define.xml",
     "itemGroupOID": "IG.DM",
     "name": "DM",
     "label": "Demographics",
@@ -40,43 +45,43 @@
             "itemOID": "IT.DM.RFSTDTC",
             "name": "RFSTDTC",
             "label": "Subject Reference Start Date/Time",
-            "dataType": "string"
+            "dataType": "datetime"
         },
         {
             "itemOID": "IT.DM.RFENDTC",
             "name": "RFENDTC",
             "label": "Subject Reference End Date/Time",
-            "dataType": "string"
+            "dataType": "datetime"
         },
         {
             "itemOID": "IT.DM.RFXSTDTC",
             "name": "RFXSTDTC",
             "label": "Date/Time of First Study Treatment",
-            "dataType": "string"
+            "dataType": "datetime"
         },
         {
             "itemOID": "IT.DM.RFXENDTC",
             "name": "RFXENDTC",
             "label": "Date/Time of Last Study Treatment",
-            "dataType": "string"
+            "dataType": "datetime"
         },
         {
             "itemOID": "IT.DM.RFICDTC",
             "name": "RFICDTC",
             "label": "Date/Time of Informed Consent",
-            "dataType": "string"
+            "dataType": "datetime"
         },
         {
             "itemOID": "IT.DM.RFPENDTC",
             "name": "RFPENDTC",
             "label": "Date/Time of End of Participation",
-            "dataType": "string"
+            "dataType": "datetime"
         },
         {
             "itemOID": "IT.DM.DTHDTC",
             "name": "DTHDTC",
             "label": "Date/Time of Death",
-            "dataType": "string"
+            "dataType": "datetime"
         },
         {
             "itemOID": "IT.DM.DTHFL",
@@ -110,8 +115,7 @@
             "itemOID": "IT.DM.AGE",
             "name": "AGE",
             "label": "Age",
-            "dataType": "integer",
-            "length": 2
+            "dataType": "integer"
         },
         {
             "itemOID": "IT.DM.AGEU",
@@ -194,14 +198,13 @@
             "itemOID": "IT.DM.DMDTC",
             "name": "DMDTC",
             "label": "Date/Time of Collection",
-            "dataType": "string"
+            "dataType": "datetime"
         },
         {
             "itemOID": "IT.DM.DMDY",
             "name": "DMDY",
             "label": "Study Day of Collection",
-            "dataType": "integer",
-            "length": 2
+            "dataType": "integer"
         }
     ],
     "rows": [

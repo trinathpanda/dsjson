@@ -242,10 +242,10 @@ def _run_convert_all(args) -> int:
         print(f"\n {e}")
         return 1
 
-    print(f"\n{'Dataset':<10}{'Status':<9}{'Records':>9}{'Columns':>9}{'Errors':>8}{'Warnings':>10}{'Time(s)':>9}")
+    print(f"\n{'Dataset':<10}{'Status':<11}{'Records':>9}{'Columns':>9}{'Errors':>8}{'Warnings':>10}{'Time(s)':>9}")
     for r in results:
         print(
-            f"{r['dataset']:<10}{r['status']:<9}{r.get('records', '-'):>9}{r.get('columns', '-'):>9}"
+            f"{r['dataset']:<10}{r['status']:<11}{r.get('records', '-'):>9}{r.get('columns', '-'):>9}"
             f"{r.get('errors', '-'):>8}{r.get('warnings', '-'):>10}{r.get('seconds', '-'):>9}"
             + (f"  {r['message']}" if r.get("message") else "")
         )

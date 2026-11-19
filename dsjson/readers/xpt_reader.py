@@ -56,6 +56,16 @@ class XPTReader:
             logger.error("Error reading XPT: %s", str(e))
             raise
 
+    @property
+    def dataset_name(self) -> str:
+        """Member name stored inside the XPT file, e.g. "DM" ("" if unknown)."""
+        return (getattr(self.meta, "table_name", None) or "").strip().upper()
+
+    def modified_datetime(self) -> str | None:
+        """XPT modification time as ISO 8601 (Dataset-JSON dbLastModifiedDateTime); XPT has no time zone."""
+        stamp = getattr(self.meta, "modification_time", None)
+        return stamp.strftime("%Y-%m-%dT%H:%M:%S") if stamp else None
+
     # ---------------------------------------------------------------------
     # Data extraction
     # ---------------------------------------------------------------------

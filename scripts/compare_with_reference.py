@@ -15,7 +15,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-TOP_KEYS = ("name", "label", "itemGroupOID", "records")
+TOP_KEYS = ("name", "label", "itemGroupOID", "records", "fileOID", "dbLastModifiedDateTime", "studyOID", "metaDataVersionOID", "metaDataRef")
 COLUMN_KEYS = ("itemOID", "name", "label", "dataType", "length", "keySequence")
 MAX_EXAMPLES = 5
 

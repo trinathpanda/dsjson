@@ -49,6 +49,8 @@ def test_all_pilot_datasets_match_reference_values(pilot, tmp_path):
 
     # Known, explained differences vs CDISC's reference (reference departs from Define-XML)
     known_cells = {"TS": 3}  # reference turned the source's curly apostrophe into "'"
+    # reference TS was rebuilt in Dec 2024; our ts.xpt is the 2012 file, so its modified time differs
+    known_top = {"TS": {"dbLastModifiedDateTime"}}
     known_types = {("LB", "LBSTRESN"), ("VS", "VSSTRESN")} | {
         (ds, "VISITNUM") for ds in ("CM", "DS", "EX", "LB", "MH", "QS", "SV", "TV", "VS")
     }
@@ -56,7 +58,7 @@ def test_all_pilot_datasets_match_reference_values(pilot, tmp_path):
         ds = ref_path.stem.upper()
         ours = json.loads((tmp_path / f"{ds}.json").read_text(encoding="utf-8"))
         r = compare.compare_dataset(ours, json.loads(ref_path.read_text(encoding="utf-8")))
-        assert r["top"] == {}, ds
+        assert set(r["top"]) == known_top.get(ds, set()), (ds, r["top"])
         assert r["cells"] == known_cells.get(ds, 0), (ds, r["cell_examples"])
         for diff in r["columns"]:
             assert diff.get("key") == "dataType" and (ds, diff["column"]) in known_types, (ds, diff)

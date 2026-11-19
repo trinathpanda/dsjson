@@ -68,6 +68,7 @@ def test_worker_batch_and_window_dataset_list(app, tmp_path):
     assert [window.dataset_combo.itemText(i) for i in range(window.dataset_combo.count())] == ["DM", "TS"]
     details = {window.summary_table.item(r, 0).text(): window.summary_table.item(r, 7).text() for r in range(2)}
     assert details["DM"] == ""  # no warnings, nothing to say
+    assert window.windowTitle().startswith("dsjson ") and window.cancel_button.isHidden()
 
     window.dataset_combo.setCurrentText("DM")  # loads preview, columns, validation
     assert window.open_json_button.isEnabled()

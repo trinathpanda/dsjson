@@ -57,6 +57,11 @@ class ConversionWorker(QObject):
         self.output_dir = output_dir
         self.validate = validate
         self.log_level = log_level
+        self._cancelled = False
+
+    def cancel(self) -> None:
+        """Stop before the next dataset (called directly from the UI thread; a running dataset finishes)."""
+        self._cancelled = True
 
     @Slot()
     def run(self) -> None:
@@ -89,6 +94,7 @@ class ConversionWorker(QObject):
                     out_dir=str(output_dir),
                     report_dir=str(report_dir) if self.validate else None,
                     datasets=self.datasets,
+                    should_stop=lambda: self._cancelled,
                 )
             else:
                 results = [self._convert_single(service, output_dir, report_dir)]
@@ -97,7 +103,10 @@ class ConversionWorker(QObject):
 
             failed = [r["dataset"] for r in results if r["status"] == "FAIL"]
             done = [r for r in results if r["status"] != "SKIPPED"]
-            if failed:
+            cancelled = sum(r.get("message") == "Cancelled" for r in results)
+            if cancelled:
+                self.finished.emit(False, f"Cancelled. {len(done)} dataset(s) converted, {cancelled} not started.")
+            elif failed:
                 self.finished.emit(False, f"{len(done) - len(failed)}/{len(done)} converted. Failed: {', '.join(failed)}")
             else:
                 self.finished.emit(True, f"{len(done)} dataset(s) converted successfully.")
@@ -121,7 +130,7 @@ class ConversionWorker(QObject):
         full = service.last_validation[0]
         return {
             "dataset": self.domain,
-            "status": "PASS" if full.ok else "FAIL",
+            "status": service.status(),
             "records": dataset_json["records"],
             "columns": len(dataset_json["columns"]),
             "errors": len(full.errors or []),

@@ -7,6 +7,16 @@ from dsjson.logging_config import get_logger
 
 logger = get_logger()
 
+OPTIONAL_TOP_LEVEL_KEYS = (
+    "fileOID",
+    "dbLastModifiedDateTime",
+    "originator",
+    "sourceSystem",
+    "studyOID",
+    "metaDataVersionOID",
+    "metaDataRef",
+)
+
 
 class DatasetJSONBuilder:
     """Build Dataset-JSON using Define + XPT."""
@@ -118,7 +128,9 @@ class DatasetJSONBuilder:
         dataset_label: Optional[str] = None,
         metadata_source: str = "Define-XML",
         item_group_oid: Optional[str] = None,
+        file_metadata: Optional[Dict[str, Any]] = None,
     ) -> Dict:
+        """file_metadata: optional top-level fields (fileOID, studyOID, ...); empty values are left out."""
 
         ds = dataset_name.upper()
 
@@ -139,6 +151,13 @@ class DatasetJSONBuilder:
         dataset_json = {
             "datasetJSONCreationDateTime": creation_time,
             "datasetJSONVersion": "1.1.0",
+        }
+        # Optional fields in the order of the Dataset-JSON v1.1 specification
+        for key in OPTIONAL_TOP_LEVEL_KEYS:
+            value = (file_metadata or {}).get(key)
+            if value:
+                dataset_json[key] = value
+        dataset_json |= {
             "itemGroupOID": item_group_oid or f"IG.{ds}",
             "name": ds,
             "label": dataset_label or ds,

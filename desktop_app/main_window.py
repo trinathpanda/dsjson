@@ -45,6 +45,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSplitter,
     QStackedWidget,
     QTableView,
@@ -55,6 +56,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from dsjson import __version__
 from dsjson.metadata.define_xml import DefineXMLParser
 from desktop_app.table_filter import BLANK_LABEL, ColumnFilterPopup, FilterHeader, RowsFilterProxy, sort_key
 from desktop_app.worker import ConversionWorker
@@ -68,8 +70,10 @@ CHEVRON = (Path(__file__).parent / "assets" / "chevron-down.svg").as_posix()
 PASS_COLOR = QColor("#4ADE80")
 FAIL_COLOR = QColor("#F87171")
 MUTED_COLOR = QColor("#94A3B8")
+INFO_COLOR = QColor("#60A5FA")
 WARN_COLOR = QColor("#FBBF24")
 TEXT_COLOR = QColor("#E2E8F0")
+STATUS_COLORS = {"PASS": PASS_COLOR, "FAIL": FAIL_COLOR, "CONVERTED": INFO_COLOR}
 
 # One place for the look: dark slate surfaces, blue accent, 4.5:1+ text contrast
 STYLE = """
@@ -226,7 +230,7 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
 
-        self.setWindowTitle("dsjson")
+        self.setWindowTitle(f"dsjson {__version__}")
         self.setMinimumSize(1000, 640)
         self.resize(1360, 860)
         self.setStyleSheet(STYLE.replace("@CHEVRON@", CHEVRON))
@@ -294,7 +298,7 @@ class MainWindow(QMainWindow):
         self.folder_mode_button.setChecked(True)
 
         self.data_stack = QStackedWidget()
-        self.mode_group.idClicked.connect(self.data_stack.setCurrentIndex)
+        self.mode_group.idClicked.connect(self._set_mode)
 
         self.dataset_list = QListWidget()
         self.dataset_list.setMinimumHeight(140)
@@ -334,7 +338,6 @@ class MainWindow(QMainWindow):
         domain_row.addWidget(QLabel("Dataset name"))
         domain_row.addWidget(self.domain_input, 1)
         single_layout.addLayout(domain_row)
-        single_layout.addStretch(1)
 
         self.data_stack.addWidget(folder_page)
         self.data_stack.addWidget(single_page)
@@ -350,6 +353,10 @@ class MainWindow(QMainWindow):
         self.progress = QProgressBar()
         self.progress.setTextVisible(False)
         self.progress.hide()
+        self.cancel_button = QPushButton("Cancel conversion")
+        self.cancel_button.setToolTip("Stops before the next dataset; the one in progress finishes.")
+        self.cancel_button.clicked.connect(self.cancel_conversion)
+        self.cancel_button.hide()
 
         self.open_folder_button = QPushButton("Open output folder")
         self.open_folder_button.clicked.connect(self.open_output_folder)
@@ -372,7 +379,8 @@ class MainWindow(QMainWindow):
         data_body = QVBoxLayout()
         data_body.addLayout(segment_row)
         data_body.addWidget(self.data_stack, 1)
-        layout.addWidget(self._card("2  SDTM data", data_body), 1)
+        self.data_card = self._card("2  SDTM data", data_body)
+        layout.addWidget(self.data_card, 1)
 
         output_body = QVBoxLayout()
         output_body.addLayout(self._picker_row(self.output_input, self.browse_output_folder, "Browse"))
@@ -381,6 +389,7 @@ class MainWindow(QMainWindow):
 
         layout.addWidget(self.convert_button)
         layout.addWidget(self.progress)
+        layout.addWidget(self.cancel_button)
         secondary = QHBoxLayout()
         secondary.addWidget(self.open_folder_button, 1)
         secondary.addWidget(self.clear_fields_button)
@@ -390,6 +399,10 @@ class MainWindow(QMainWindow):
         privacy.setObjectName("muted")
         privacy.setWordWrap(True)
         layout.addWidget(privacy)
+        layout.addStretch(0)  # takes the spare height in Single XPT mode
+        self.sidebar_layout = layout
+
+        self._set_mode(0)
 
         self.sidebar_scroll = QScrollArea()
         self.sidebar_scroll.setObjectName("sidebarScroll")
@@ -404,7 +417,7 @@ class MainWindow(QMainWindow):
         header_layout = QVBoxLayout(header)
         header_layout.setContentsMargins(20, 18, 20, 14)
         header_layout.setSpacing(2)
-        title = QLabel("dsjson")
+        title = QLabel(f"dsjson <span style='font-size:10pt; font-weight:400; color:#94A3B8'>v{__version__}</span>")
         title.setObjectName("appTitle")
         subtitle = QLabel("SDTM XPT + Define-XML to CDISC Dataset-JSON v1.1")
         subtitle.setObjectName("muted")
@@ -418,6 +431,19 @@ class MainWindow(QMainWindow):
         panel_layout.setSpacing(0)
         panel_layout.addWidget(header)
         panel_layout.addWidget(self.sidebar_scroll, 1)
+
+    def _set_mode(self, index: int) -> None:
+        """0 = whole folder (card grows with the dataset list), 1 = single XPT (card fits its two rows)."""
+        self.data_stack.setCurrentIndex(index)
+        for i in range(self.data_stack.count()):  # hidden page must not reserve height
+            policy = QSizePolicy.Preferred if i == index else QSizePolicy.Ignored
+            self.data_stack.widget(i).setSizePolicy(QSizePolicy.Preferred, policy)
+        folder = index == 0
+        self.data_card.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred if folder else QSizePolicy.Maximum)
+        if hasattr(self, "sidebar_layout"):
+            self.sidebar_layout.setStretchFactor(self.data_card, 1 if folder else 0)
+            self.sidebar_layout.setStretch(self.sidebar_layout.count() - 1, 0 if folder else 1)
+        self.data_stack.updateGeometry()
 
     def _card(self, title: str, body) -> QFrame:
         card = QFrame()
@@ -809,6 +835,9 @@ class MainWindow(QMainWindow):
         self.progress.show()
         self.convert_button.setEnabled(False)
         self.convert_button.setText("Converting…")
+        self.cancel_button.setEnabled(True)
+        self.cancel_button.setText("Cancel conversion")
+        self.cancel_button.show()
         self.append_log(f"--- Converting {self.total_jobs} dataset(s) ---")
         self.tabs.setCurrentIndex(4)
 
@@ -836,6 +865,12 @@ class MainWindow(QMainWindow):
 
         self.worker_thread.start()
 
+    def cancel_conversion(self) -> None:
+        if self.worker is not None:
+            self.worker.cancel()  # plain flag, read by the worker thread between datasets
+            self.cancel_button.setEnabled(False)
+            self.cancel_button.setText("Cancelling after the current dataset…")
+
     def _clear_thread(self) -> None:
         self.worker_thread = None
         self.worker = None
@@ -859,7 +894,7 @@ class MainWindow(QMainWindow):
                     item.setText("" if value is None else str(value))
                 if key == "status":
                     item.setFont(bold)
-                    item.setForeground(QBrush(PASS_COLOR if value == "PASS" else FAIL_COLOR if value == "FAIL" else MUTED_COLOR))
+                    item.setForeground(QBrush(STATUS_COLORS.get(value, MUTED_COLOR)))
                 if key == "warnings" and value:
                     item.setToolTip("Data does not fit the Define-XML type. See the Validation report tab.")
                 if key == "message":
@@ -883,6 +918,8 @@ class MainWindow(QMainWindow):
         """Failure reason, or what the warnings are (grouped); blank when there is nothing to say."""
         if result.get("message"):
             return result["message"]
+        if result.get("status") == "CONVERTED":
+            return "Converted, not validated (validation was switched off)"
         path = report_dir / f"{result['dataset']}_validation.json"
         if not result.get("warnings") or not path.exists():
             return ""
@@ -917,13 +954,14 @@ class MainWindow(QMainWindow):
         self.convert_button.setEnabled(True)
         self.convert_button.setText("Convert to Dataset-JSON")
         self.progress.hide()
+        self.cancel_button.hide()
         self.append_log(message)
         self.statusBar().showMessage(message)
 
         self.tabs.setCurrentIndex(0)
         if self.summary_table.rowCount():
             self.summary_table.selectRow(0)
-        if not success:
+        if not success and not message.startswith("Cancelled"):
             with self._blurred():
                 QMessageBox.warning(self, "Finished with problems", message + "\n\nSee the Summary and Logs tabs.")
 
@@ -1178,7 +1216,7 @@ class MainWindow(QMainWindow):
             field.setText(self.settings.value(key, "", type=str))
         if not self.settings.value("batch_mode", True, type=bool):
             self.single_mode_button.setChecked(True)
-            self.data_stack.setCurrentIndex(1)
+            self._set_mode(1)
         self.refresh_dataset_list()
 
     def _fields(self) -> dict[str, QLineEdit]:
