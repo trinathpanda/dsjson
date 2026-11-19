@@ -1,8 +1,12 @@
 {
-    "datasetJSONCreationDateTime": "2026-11-19T19:12:29Z",
+    "datasetJSONCreationDateTime": "2026-11-19T19:33:30Z",
     "datasetJSONVersion": "1.1.0",
     "fileOID": "SYNTH-STUDY-001.dm",
     "dbLastModifiedDateTime": "2026-05-12T12:26:54",
+    "sourceSystem": {
+        "name": "dsjson",
+        "version": "0.1.0"
+    },
     "studyOID": "SYNTH-STUDY-001",
     "metaDataVersionOID": "MDV.SYNTH-SDTM-001",
     "metaDataRef": "define.xml",

@@ -20,6 +20,7 @@ from dsjson.validation.schema_validator import SchemaValidator, ValidationIssue,
 from dsjson.reports.conversion_report import ConversionReport
 from dsjson.reports.validation_report import ValidationReportBuilder
 from dsjson.logging_config import get_logger
+from dsjson import __version__
 
 logger = get_logger()
 
@@ -87,6 +88,7 @@ class ConversionService:
             "studyOID": study_oid,
             "metaDataVersionOID": define_parser.get_metadata_version_oid(),
             "metaDataRef": Path(define_path).name,
+            "sourceSystem": {"name": "dsjson", "version": __version__},  # software that wrote this file
         }
 
         # ------------------------------

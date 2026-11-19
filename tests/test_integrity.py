@@ -6,6 +6,7 @@ import pytest
 
 from dsjson.services.conversion_service import ConversionService
 from dsjson.validation.schema_validator import SchemaValidator
+from dsjson import __version__
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFINE = ROOT / "demo" / "input" / "define.xml"
@@ -31,6 +32,7 @@ def test_file_level_fields_and_status():
     assert dataset_json["studyOID"] and dataset_json["metaDataVersionOID"]
     assert dataset_json["fileOID"] == f"{dataset_json['studyOID']}.dm"
     assert dataset_json["metaDataRef"] == "define.xml"
+    assert dataset_json["sourceSystem"] == {"name": "dsjson", "version": __version__}
     assert len(dataset_json["dbLastModifiedDateTime"]) == 19  # YYYY-MM-DDTHH:MM:SS
 
     unchecked = ConversionService(validator=SchemaValidator(skip_validation=True))

@@ -30,7 +30,8 @@ SDTM XPT    (data: records and values)       merge + build      validation_repor
   column) or only in the XPT (data would be dropped). With validation switched off the status
   is `CONVERTED`, not `PASS`.
 - **File-level metadata:** `studyOID`, `metaDataVersionOID`, `metaDataRef` and `fileOID` come
-  from Define-XML; `dbLastModifiedDateTime` from the XPT file.
+  from Define-XML; `dbLastModifiedDateTime` from the XPT file; `sourceSystem` names dsjson
+  and its version (the software that wrote the file).
 - **Batch:** convert a whole folder in one run; one bad file does not stop the others, and
   a run can be cancelled between datasets.
 
@@ -188,8 +189,8 @@ tests/                            pytest suite
 - Done: XPT + Define-XML to Dataset-JSON v1.1, batch conversion, validation reports,
   desktop app, verification on the CDISC pilot study.
 - Next: Windows `.exe` packaging (PyInstaller).
-- Not yet: SAS7BDAT/CSV input, specification-file metadata, `sourceSystem` and
-  `originator` fields, NDJSON output.
+- Not yet: SAS7BDAT/CSV input, specification-file metadata, the optional
+  `originator` field, NDJSON output.
 - Later: GxP readiness (audit trail, reconciliation, IQ/OQ evidence), see
   [docs/GXP_ROADMAP.md](docs/GXP_ROADMAP.md).
 - Releases are tagged (`v0.1.0`); the version shows in the app title.
